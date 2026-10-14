@@ -91,6 +91,24 @@ Artisan::command('app:remove-user {phone}', function (string $phone) {
     $this->info("User {$user->name} ({$user->phone_number}) telah dinonaktifkan.");
 })->purpose('Menonaktifkan nomor WhatsApp dari pengingat');
 
+// Aliases for user management commands
+Artisan::command('user:add {name} {phone} {--lid=} {--notes=}', function (string $name, string $phone) {
+    $this->call('app:add-user', [
+        'name' => $name,
+        'phone' => $phone,
+        '--lid' => $this->option('lid'),
+        '--notes' => $this->option('notes'),
+    ]);
+})->purpose('Mendaftarkan peserta magang baru (alias untuk app:add-user)');
+
+Artisan::command('user:list', function () {
+    $this->call('app:list-users');
+})->purpose('Menampilkan seluruh peserta magang (alias untuk app:list-users)');
+
+Artisan::command('user:remove {phone}', function (string $phone) {
+    $this->call('app:remove-user', ['phone' => $phone]);
+})->purpose('Menonaktifkan peserta magang (alias untuk app:remove-user)');
+
 // Artisan helper to inspect today's report status
 Artisan::command('app:maganghub-status {phone?}', function (?string $phone = null) {
     $now = Carbon::now('Asia/Makassar');
