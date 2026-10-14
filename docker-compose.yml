@@ -29,7 +29,7 @@ services:
 
 networks:
   waha-network:
-    name: ${DOCKER_NETWORK_NAME:-kref-network}
+    name: ${DOCKER_NETWORK_NAME:-kref-barber_kref-network}
     external: true
 
 volumes:
