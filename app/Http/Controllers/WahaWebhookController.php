@@ -1,0 +1,273 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Jobs\GenerateDailyReport;
+use App\Models\AutomationLog;
+use App\Models\DailyReport;
+use App\Models\InternUser;
+use App\Services\ScriptBuilderService;
+use App\Services\WahaService;
+use Carbon\Carbon;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+
+class WahaWebhookController extends Controller
+{
+    /**
+     * Handle incoming WAHA webhook events.
+     */
+    public function __invoke(
+        Request $request,
+        WahaService $waha,
+        ScriptBuilderService $scriptBuilder
+    ): JsonResponse {
+        // 1. Verify Secret Key if configured
+        $secret = config('services.waha.webhook_secret');
+        if (! empty($secret)) {
+            $headerSecret = $request->header('X-Api-Key') ?? $request->header('X-Webhook-Secret') ?? $request->query('secret');
+            if ($headerSecret !== $secret) {
+                Log::warning('WahaWebhook: Unauthorized webhook access attempt', [
+                    'ip' => $request->ip(),
+                ]);
+
+                return response()->json(['error' => 'Unauthorized'], 401);
+            }
+        }
+
+        // 2. Extract Event & Payload
+        $event = $request->input('event', 'message');
+        $payload = $request->input('payload') ?? $request->all();
+
+        // Only process message events
+        if (! in_array($event, ['message', 'message.any'], true)) {
+            return response()->json(['status' => 'ignored_event', 'event' => $event]);
+        }
+
+        // Verify session matches if session is passed in request
+        $incomingSession = $request->input('session');
+        $configuredSession = config('services.waha.session');
+        if (! empty($configuredSession) && ! empty($incomingSession) && $incomingSession !== $configuredSession) {
+            Log::info("WahaWebhook: Ignored message for session [{$incomingSession}], expected [{$configuredSession}]");
+
+            return response()->json(['status' => 'ignored_different_session', 'session' => $incomingSession]);
+        }
+
+        $fromMe = (bool) ($payload['fromMe'] ?? false);
+        if ($fromMe) {
+            return response()->json(['status' => 'ignored_from_me']);
+        }
+
+        $rawFrom = (string) ($payload['from'] ?? '');
+        $senderDigits = preg_replace('/[^0-9]/', '', $rawFrom) ?? '';
+        $body = trim((string) ($payload['body'] ?? $payload['_data']['body'] ?? ''));
+        $messageId = (string) ($payload['id'] ?? '');
+
+        if (empty($body) || empty($senderDigits)) {
+            return response()->json(['status' => 'ignored_empty_message']);
+        }
+
+        // 3. Whitelist Check (supports phone number and whatsapp_lid)
+        if (! InternUser::isPhoneAuthorized($senderDigits, $rawFrom)) {
+            Log::info("WahaWebhook: Message from unauthorized sender {$senderDigits} ({$rawFrom}). Ignoring.");
+
+            return response()->json(['status' => 'ignored_unauthorized_sender']);
+        }
+
+        $user = InternUser::findByPhoneOrLid($senderDigits, $rawFrom);
+        $userPhone = $user?->phone_number ?? $senderDigits;
+        $replyTarget = $userPhone;
+
+        // 4. Idempotency Check
+        if (! empty($messageId)) {
+            $alreadyProcessed = DailyReport::query()
+                ->where('waha_last_message_id', $messageId)
+                ->exists();
+
+            if ($alreadyProcessed) {
+                return response()->json(['status' => 'already_processed']);
+            }
+        }
+
+        // 5. State Machine & Command Dispatcher
+        $now = Carbon::now('Asia/Makassar');
+        $today = $now->toDateString();
+        $upperBody = strtoupper($body);
+
+        $findReport = fn () => DailyReport::query()
+            ->where(function ($q) use ($userPhone, $senderDigits) {
+                $q->where('sender_phone', $userPhone)
+                    ->orWhere('sender_phone', $senderDigits);
+            })
+            ->whereDate('report_date', $today);
+
+        // CASE 1: SELESAI / SUBMIT
+        if (in_array($upperBody, ['SELESAI', 'SUBMIT', 'DONE'], true)) {
+            $report = $findReport()->latest()->first();
+
+            if (! $report) {
+                $waha->sendMessage(
+                    $replyTarget,
+                    "⚠️ Tidak ditemukan laporan aktif untuk hari ini ({$today})."
+                );
+
+                return response()->json(['status' => 'no_report_found']);
+            }
+
+            $report->update([
+                'status' => DailyReport::STATUS_SUBMITTED,
+                'submitted_at' => now(),
+                'waha_last_message_id' => $messageId,
+            ]);
+
+            AutomationLog::query()->create([
+                'daily_report_id' => $report->id,
+                'action' => 'submission_confirmed',
+                'details' => ['message_id' => $messageId],
+            ]);
+
+            $waha->sendMessage(
+                $replyTarget,
+                "🎉 *Laporan MagangHub Telah Dikonfirmasi Selesai!*\n\n"
+                ."Tanggal: {$today}\n"
+                ."Status: Terkirim & Tercatat\n\n"
+                .'Kerja bagus hari ini! Selamat beristirahat.'
+            );
+
+            return response()->json(['status' => 'submitted_confirmed']);
+        }
+
+        // CASE 2: EDIT / REVISI
+        if (str_starts_with($upperBody, 'EDIT:') || str_starts_with($upperBody, 'EDIT ') || str_starts_with($upperBody, 'REVISI:')) {
+            $report = $findReport()->latest()->first();
+
+            if (! $report || empty($report->activity_description)) {
+                $waha->sendMessage(
+                    $replyTarget,
+                    '⚠️ Tidak ada draf laporan yang dapat direvisi saat ini. Kirimkan catatan aktivitas baru terlebih dahulu.'
+                );
+
+                return response()->json(['status' => 'no_draft_for_revision']);
+            }
+
+            $instruction = trim(preg_replace('/^(EDIT:|EDIT|REVISI:|REVISI)/i', '', $body) ?? '');
+
+            $report->update([
+                'sender_phone' => $userPhone,
+                'waha_last_message_id' => $messageId,
+            ]);
+
+            // Kirim pesan konfirmasi segera bahwa revisi sedang diproses
+            $waha->sendMessage(
+                $replyTarget,
+                "⏳ *Revisi diterima!* Sedang memproses perbaikan laporan dan memperbarui script...\n\n🌐 *Dashboard MagangHub:*\nhttps://monev.maganghub.kemnaker.go.id/dashboard"
+            );
+
+            GenerateDailyReport::dispatch($report, $instruction);
+
+            return response()->json(['status' => 'revision_dispatched']);
+        }
+
+        // CASE 3: BATAL
+        if ($upperBody === 'BATAL') {
+            $report = $findReport()
+                ->where('status', '!=', DailyReport::STATUS_SUBMITTED)
+                ->latest()
+                ->first();
+
+            if ($report) {
+                $report->update([
+                    'status' => DailyReport::STATUS_CANCELLED,
+                    'waha_last_message_id' => $messageId,
+                ]);
+
+                AutomationLog::query()->create([
+                    'daily_report_id' => $report->id,
+                    'action' => 'report_cancelled',
+                    'details' => ['message_id' => $messageId],
+                ]);
+
+                $waha->sendMessage(
+                    $replyTarget,
+                    '🛑 Laporan harian hari ini telah dibatalkan. Jika ingin membuat draf baru, cukup kirimkan catatan aktivitasmu kembali.'
+                );
+            } else {
+                $waha->sendMessage($replyTarget, 'ℹ️ Tidak ada laporan aktif yang sedang berjalan untuk dibatalkan.');
+            }
+
+            return response()->json(['status' => 'cancelled']);
+        }
+
+        // CASE 4: SCRIPT RESEND (jika pengguna minta ulang script)
+        if (in_array($upperBody, ['SCRIPT', 'ULANG', 'KIRIM SCRIPT'], true)) {
+            $report = $findReport()->latest()->first();
+
+            if ($report && ! empty($report->activity_description)) {
+                $script = $scriptBuilder->build(
+                    (string) $report->activity_description,
+                    (string) $report->lessons_learned,
+                    (string) $report->challenges
+                );
+
+                $waha->sendMessage($replyTarget, 'Berikut script console laporan harianmu:');
+                $waha->sendMessage($replyTarget, $script);
+
+                return response()->json(['status' => 'script_resent']);
+            }
+        }
+
+        // CASE 5: DAILY ACTIVITY NOTES
+        $report = $findReport()->first();
+
+        if ($report && $report->status === DailyReport::STATUS_SUBMITTED) {
+            $waha->sendMessage(
+                $replyTarget,
+                "ℹ️ Laporan hari ini ({$today}) sudah berstatus *SUBMITTED*. Jika ingin memperbarui, silakan ubah status atau hubungi admin."
+            );
+
+            return response()->json(['status' => 'already_submitted']);
+        }
+
+        if (! $report) {
+            $report = DailyReport::query()->create([
+                'report_date' => $today,
+                'sender_phone' => $userPhone,
+                'activity_notes' => $body,
+                'status' => DailyReport::STATUS_GENERATING_DRAFT,
+                'waha_last_message_id' => $messageId,
+            ]);
+        } else {
+            $report->update([
+                'sender_phone' => $userPhone,
+                'activity_notes' => $body,
+                'status' => DailyReport::STATUS_GENERATING_DRAFT,
+                'waha_last_message_id' => $messageId,
+            ]);
+        }
+
+        AutomationLog::query()->create([
+            'daily_report_id' => $report->id,
+            'action' => 'activity_received',
+            'details' => [
+                'raw_notes' => $body,
+                'message_id' => $messageId,
+                'user_phone' => $userPhone,
+                'reply_target' => $replyTarget,
+            ],
+        ]);
+
+        // Kirim pesan konfirmasi segera bahwa bot sedang memproses
+        $waha->sendMessage(
+            $replyTarget,
+            '⏳ *Catatan diterima!* Sedang memproses laporan harianmu dengan AI dan menyiapkan script otomatisasi...'
+        );
+
+        GenerateDailyReport::dispatch($report);
+
+        return response()->json([
+            'status' => 'draft_generation_dispatched',
+            'report_id' => $report->id,
+        ]);
+    }
+}

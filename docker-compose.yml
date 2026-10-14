@@ -1,0 +1,39 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: maganghub-app
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8001}:80"
+    env_file:
+      - .env
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      APP_DEBUG: ${APP_DEBUG:-false}
+      DB_CONNECTION: sqlite
+      DB_DATABASE: /var/www/html/database/data/database.sqlite
+      SESSION_DRIVER: database
+      CACHE_STORE: database
+      QUEUE_CONNECTION: database
+      WAHA_BASE_URL: ${WAHA_BASE_URL:-http://kref-waha:3000}
+      WAHA_API_KEY: ${WAHA_API_KEY}
+      WAHA_SESSION: ${WAHA_SESSION:-maganghub}
+    volumes:
+      - sqlite_data:/var/www/html/database/data
+      - storage_data:/var/www/html/storage/app
+      - ./storage/logs:/var/www/html/storage/logs
+    networks:
+      - waha-network
+
+networks:
+  waha-network:
+    name: ${DOCKER_NETWORK_NAME:-kref-network}
+    external: true
+
+volumes:
+  sqlite_data:
+    driver: local
+  storage_data:
+    driver: local
