@@ -56,15 +56,13 @@ RUN apk add --no-cache \
         libzip-dev \
         icu-dev \
         oniguruma-dev \
-        sqlite-dev \
+        linux-headers \
         openssl \
         tzdata \
     && cp /usr/share/zoneinfo/Asia/Makassar /etc/localtime \
     && echo "Asia/Makassar" > /etc/timezone \
-    && docker-php-ext-install -j"$(nproc)" \
-        pdo_sqlite \
+    && docker-php-ext-install \
         pdo_mysql \
-        mbstring \
         bcmath \
         pcntl \
         sockets \
