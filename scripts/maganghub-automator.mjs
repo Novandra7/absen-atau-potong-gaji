@@ -2,6 +2,17 @@ import puppeteer from 'puppeteer-core';
 import fs from 'fs';
 import path from 'path';
 
+// Ensure writable HOME and XDG directories for Chromium in Docker / www-data
+if (!process.env.HOME || process.env.HOME === '/var/www') {
+  process.env.HOME = '/tmp';
+}
+if (!process.env.XDG_CONFIG_HOME) {
+  process.env.XDG_CONFIG_HOME = '/tmp/.chromium_config';
+}
+if (!process.env.XDG_CACHE_HOME) {
+  process.env.XDG_CACHE_HOME = '/tmp/.chromium_cache';
+}
+
 /**
  * Locate Chrome/Chromium executable on the system.
  */
@@ -262,6 +273,10 @@ async function run() {
       '--disable-dev-shm-usage',
       '--disable-accelerated-2d-canvas',
       '--disable-gpu',
+      '--disable-software-rasterizer',
+      '--disable-crash-reporter',
+      '--no-crashpad',
+      '--disable-breakpad',
       `--window-size=${width},${height}`,
     ],
   };
@@ -270,6 +285,17 @@ async function run() {
     const dir = path.resolve(payload.userDataDir);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
+    } else {
+      // Remove stale lock files if a previous process crashed or terminated abnormally
+      const staleLocks = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
+      for (const lock of staleLocks) {
+        const lockFile = path.join(dir, lock);
+        try {
+          if (fs.existsSync(lockFile)) {
+            fs.unlinkSync(lockFile);
+          }
+        } catch (_) {}
+      }
     }
     launchOptions.userDataDir = dir;
   }

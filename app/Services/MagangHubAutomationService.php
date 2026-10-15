@@ -201,7 +201,8 @@ class MagangHubAutomationService
         $scriptPath = base_path('scripts/maganghub-automator.mjs');
 
         try {
-            $command = sprintf('"%s" "%s" "%s" 2>&1', $nodeBinary, $scriptPath, $tempPayloadFile);
+            $envPrefix = DIRECTORY_SEPARATOR === '\\' ? '' : 'HOME=/tmp XDG_CONFIG_HOME=/tmp/.chromium XDG_CACHE_HOME=/tmp/.chromium ';
+            $command = sprintf('%s"%s" "%s" "%s" 2>&1', $envPrefix, $nodeBinary, $scriptPath, $tempPayloadFile);
             $output = trim((string) shell_exec($command));
 
             // Extract JSON from output

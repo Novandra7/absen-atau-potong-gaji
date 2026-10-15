@@ -47,7 +47,10 @@ FROM php:8.3-fpm-alpine AS app
 
 WORKDIR /var/www/html
 
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser \
+ENV HOME=/tmp \
+    XDG_CONFIG_HOME=/tmp/.chromium \
+    XDG_CACHE_HOME=/tmp/.chromium \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser \
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
 RUN apk add --no-cache \

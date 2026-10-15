@@ -362,4 +362,32 @@ class WahaWebhookFeatureTest extends TestCase
         $response->assertStatus(200)
             ->assertJson(['status' => 'session_info_sent']);
     }
+
+    public function test_it_drops_duplicate_webhook_events_using_cache_lock(): void
+    {
+        Queue::fake();
+
+        $payload = [
+            'event' => 'message',
+            'payload' => [
+                'from' => '6281234567890@c.us',
+                'fromMe' => false,
+                'body' => 'LOGIN novan@example.com RahasiaKuat123!',
+                'id' => 'msg_login_duplicate_test',
+            ],
+        ];
+
+        // First call succeeds
+        $first = $this->withHeaders(['X-Api-Key' => 'test_secret'])
+            ->postJson('/api/webhooks/waha', $payload);
+        $first->assertStatus(200)->assertJson(['status' => 'login_dispatched']);
+
+        // Second call with same message ID is dropped by atomic lock
+        $second = $this->withHeaders(['X-Api-Key' => 'test_secret'])
+            ->postJson('/api/webhooks/waha', $payload);
+        $second->assertStatus(200)->assertJson(['status' => 'already_processed_duplicate_lock']);
+
+        // Only 1 job pushed, not 2
+        Queue::assertPushed(LoginMaganghubHeadless::class, 1);
+    }
 }

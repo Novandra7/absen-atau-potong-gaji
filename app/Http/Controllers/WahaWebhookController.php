@@ -13,6 +13,7 @@ use App\Services\WahaService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
 class WahaWebhookController extends Controller
@@ -81,7 +82,7 @@ class WahaWebhookController extends Controller
         $userPhone = $user?->phone_number ?? $senderDigits;
         $replyTarget = $userPhone;
 
-        // 4. Idempotency Check
+        // 4. Idempotency Check (Atomic Cache Lock + Database Check)
         if (! empty($messageId)) {
             $alreadyProcessed = DailyReport::query()
                 ->where('waha_last_message_id', $messageId)
@@ -89,6 +90,13 @@ class WahaWebhookController extends Controller
 
             if ($alreadyProcessed) {
                 return response()->json(['status' => 'already_processed']);
+            }
+
+            // Atomic cache lock to prevent concurrent duplicate webhooks (e.g. 'message' and 'message.any' for same message)
+            if (! Cache::add('waha_msg_lock_'.$messageId, true, now()->addMinutes(10))) {
+                Log::info("WahaWebhook: Duplicate message [{$messageId}] ignored by atomic cache lock.");
+
+                return response()->json(['status' => 'already_processed_duplicate_lock']);
             }
         }
 

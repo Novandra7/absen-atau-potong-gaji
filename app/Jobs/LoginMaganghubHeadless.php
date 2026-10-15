@@ -6,13 +6,23 @@ use App\Models\InternUser;
 use App\Services\MagangHubAutomationService;
 use App\Services\WahaService;
 use Carbon\Carbon;
+use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Log;
 
-class LoginMaganghubHeadless implements ShouldQueue
+class LoginMaganghubHeadless implements ShouldBeUnique, ShouldQueue
 {
     use Queueable;
+
+    public int $uniqueFor = 180;
+
+    public function uniqueId(): string
+    {
+        return $this->userOrPhone instanceof InternUser
+            ? $this->userOrPhone->phone_number
+            : InternUser::cleanPhoneNumber($this->userOrPhone);
+    }
 
     public function __construct(
         public InternUser|string $userOrPhone,
