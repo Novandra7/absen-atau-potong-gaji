@@ -390,4 +390,44 @@ class WahaWebhookFeatureTest extends TestCase
         // Only 1 job pushed, not 2
         Queue::assertPushed(LoginMaganghubHeadless::class, 1);
     }
+
+    public function test_it_debounces_duplicate_webhook_between_phone_and_lid(): void
+    {
+        Queue::fake();
+
+        $user = InternUser::factory()->create([
+            'phone_number' => '6285163235033',
+            'whatsapp_lid' => '1990999888777',
+            'is_active' => true,
+        ]);
+
+        // Event 1 from phone number @c.us
+        $first = $this->withHeaders(['X-Api-Key' => 'test_secret'])
+            ->postJson('/api/webhooks/waha', [
+                'event' => 'message',
+                'payload' => [
+                    'from' => '6285163235033@c.us',
+                    'fromMe' => false,
+                    'body' => 'LOGIN user@example.com Secret123!',
+                    'id' => 'msg_phone_001',
+                ],
+            ]);
+        $first->assertStatus(200)->assertJson(['status' => 'login_dispatched']);
+
+        // Event 2 from WhatsApp LID @lid for the exact same message
+        $second = $this->withHeaders(['X-Api-Key' => 'test_secret'])
+            ->postJson('/api/webhooks/waha', [
+                'event' => 'message',
+                'payload' => [
+                    'from' => '1990999888777@lid',
+                    'fromMe' => false,
+                    'body' => 'LOGIN user@example.com Secret123!',
+                    'id' => 'msg_lid_002',
+                ],
+            ]);
+        $second->assertStatus(200)->assertJson(['status' => 'already_processed_duplicate_content']);
+
+        // Only 1 job pushed!
+        Queue::assertPushed(LoginMaganghubHeadless::class, 1);
+    }
 }

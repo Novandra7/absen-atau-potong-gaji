@@ -281,26 +281,62 @@ async function run() {
     ],
   };
 
+/**
+ * Unconditionally clean any Singleton lockfiles/symlinks in Chromium profile.
+ */
+function cleanSingletonLocks(profileDir) {
+  if (!profileDir) return;
+  try {
+    if (fs.existsSync(profileDir)) {
+      const entries = fs.readdirSync(profileDir);
+      for (const entry of entries) {
+        if (entry.startsWith('Singleton')) {
+          const entryPath = path.join(profileDir, entry);
+          try {
+            fs.unlinkSync(entryPath);
+          } catch (_) {
+            try {
+              fs.rmSync(entryPath, { force: true, recursive: true });
+            } catch (_) {}
+          }
+        }
+      }
+    }
+  } catch (_) {}
+}
+
   if (payload.userDataDir) {
     const dir = path.resolve(payload.userDataDir);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     } else {
-      // Remove stale lock files if a previous process crashed or terminated abnormally
-      const staleLocks = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
-      for (const lock of staleLocks) {
-        const lockFile = path.join(dir, lock);
-        try {
-          if (fs.existsSync(lockFile)) {
-            fs.unlinkSync(lockFile);
-          }
-        } catch (_) {}
-      }
+      cleanSingletonLocks(dir);
     }
     launchOptions.userDataDir = dir;
   }
 
-  const browser = await puppeteer.launch(launchOptions);
+  let browser;
+  try {
+    browser = await puppeteer.launch(launchOptions);
+  } catch (launchErr) {
+    const errMsg = String(launchErr?.message || '');
+    if (
+      launchOptions.userDataDir &&
+      (errMsg.includes('Singleton') || errMsg.includes('Code: 21') || errMsg.includes('profile appears to be in use'))
+    ) {
+      console.error('Warning: Profile locked by previous process. Force cleaning locks and retrying launch...');
+      cleanSingletonLocks(launchOptions.userDataDir);
+      try {
+        browser = await puppeteer.launch(launchOptions);
+      } catch (retryErr) {
+        console.error('Warning: Falling back to isolated clean profile without userDataDir...');
+        delete launchOptions.userDataDir;
+        browser = await puppeteer.launch(launchOptions);
+      }
+    } else {
+      throw launchErr;
+    }
+  }
 
   const pages = await browser.pages();
   const page = pages.length > 0 ? pages[0] : await browser.newPage();

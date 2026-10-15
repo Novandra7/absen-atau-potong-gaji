@@ -197,8 +197,16 @@ class MagangHubAutomationService
         File::ensureDirectoryExists(dirname($tempPayloadFile));
         file_put_contents($tempPayloadFile, (string) json_encode($payload));
 
-        $nodeBinary = (string) config('services.maganghub.node_path', 'node');
-        $scriptPath = base_path('scripts/maganghub-automator.mjs');
+        // Clean any leftover Singleton locks from previous crashed processes
+        if (! empty($payload['userDataDir']) && is_dir((string) $payload['userDataDir'])) {
+            $lockFiles = glob($payload['userDataDir'].DIRECTORY_SEPARATOR.'Singleton*') ?: [];
+            foreach ($lockFiles as $lockFile) {
+                @unlink($lockFile);
+            }
+            @unlink($payload['userDataDir'].DIRECTORY_SEPARATOR.'SingletonLock');
+            @unlink($payload['userDataDir'].DIRECTORY_SEPARATOR.'SingletonCookie');
+            @unlink($payload['userDataDir'].DIRECTORY_SEPARATOR.'SingletonSocket');
+        }
 
         try {
             $envPrefix = DIRECTORY_SEPARATOR === '\\' ? '' : 'HOME=/tmp XDG_CONFIG_HOME=/tmp/.chromium XDG_CACHE_HOME=/tmp/.chromium ';

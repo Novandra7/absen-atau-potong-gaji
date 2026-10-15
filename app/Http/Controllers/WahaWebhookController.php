@@ -107,11 +107,11 @@ class WahaWebhookController extends Controller
             }
         }
 
-        // Content & Sender debounce lock (8 seconds):
-        // Prevents WAHA double-event delivery ('message' + 'message.any') or rapid duplicate webhooks
-        $contentLockKey = 'waha_sender_body_lock_'.md5($senderDigits.'_'.$upperBody);
-        if (! Cache::add($contentLockKey, true, now()->addSeconds(8))) {
-            Log::info("WahaWebhook: Duplicate content from sender [{$senderDigits}] ignored within 8s window.");
+        // Content & Sender debounce lock (15 seconds):
+        // Prevents WAHA double-event delivery (e.g. @c.us vs @lid, 'message' vs 'message.any')
+        $contentLockKey = 'waha_sender_body_lock_'.md5($userPhone.'_'.$upperBody);
+        if (! Cache::add($contentLockKey, true, now()->addSeconds(15))) {
+            Log::info("WahaWebhook: Duplicate content for user [{$userPhone}] ignored within 15s window.");
 
             return response()->json(['status' => 'already_processed_duplicate_content']);
         }
