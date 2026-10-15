@@ -63,13 +63,6 @@ class WahaWebhookController extends Controller
         }
 
         $rawFrom = (string) ($payload['from'] ?? '');
-        // Ignore internal WhatsApp LID events; only process standard phone numbers
-        if (str_ends_with($rawFrom, '@lid') || str_contains($rawFrom, '@lid')) {
-            Log::info("WahaWebhook: Ignored internal WhatsApp LID event from {$rawFrom}. Only standard phone numbers are processed.");
-
-            return response()->json(['status' => 'ignored_lid_event']);
-        }
-
         $senderDigits = preg_replace('/[^0-9]/', '', $rawFrom) ?? '';
         $body = trim((string) ($payload['body'] ?? $payload['_data']['body'] ?? ''));
         $upperBody = strtoupper($body);

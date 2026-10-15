@@ -274,9 +274,24 @@ class WahaWebhookFeatureTest extends TestCase
         });
     }
 
-    public function test_it_ignores_message_from_whatsapp_lid(): void
+    public function test_it_handles_message_from_whatsapp_lid(): void
     {
         Queue::fake();
+
+        $today = Carbon::now('Asia/Makassar')->toDateString();
+
+        $user = InternUser::factory()->create([
+            'name' => 'LID User',
+            'phone_number' => '6285551234567',
+            'whatsapp_lid' => '1990999888777',
+            'is_active' => true,
+        ]);
+
+        $report = DailyReport::factory()->create([
+            'report_date' => $today,
+            'sender_phone' => $user->phone_number,
+            'status' => DailyReport::STATUS_PENDING_INPUT,
+        ]);
 
         $response = $this->withHeaders(['X-Api-Key' => 'test_secret'])
             ->postJson('/api/webhooks/waha', [
@@ -290,9 +305,15 @@ class WahaWebhookFeatureTest extends TestCase
             ]);
 
         $response->assertStatus(200)
-            ->assertJson(['status' => 'ignored_lid_event']);
+            ->assertJson(['status' => 'draft_generation_dispatched']);
 
-        Queue::assertNothingPushed();
+        $this->assertDatabaseHas('daily_reports', [
+            'id' => $report->id,
+            'sender_phone' => '6285551234567',
+            'activity_notes' => 'Hari ini saya mengerjakan migrasi skema database.',
+        ]);
+
+        Queue::assertPushed(GenerateDailyReport::class);
     }
 
     public function test_it_handles_login_registration_command_and_dispatches_headless_job(): void
@@ -404,7 +425,7 @@ class WahaWebhookFeatureTest extends TestCase
                     'id' => 'msg_lid_002',
                 ],
             ]);
-        $second->assertStatus(200)->assertJson(['status' => 'ignored_lid_event']);
+        $second->assertStatus(200)->assertJson(['status' => 'already_processed_duplicate_content']);
 
         // Only 1 job pushed!
         Queue::assertPushed(LoginMaganghubHeadless::class, 1);
