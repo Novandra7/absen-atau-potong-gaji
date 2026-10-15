@@ -29,6 +29,7 @@ class WahaWebhookFeatureTest extends TestCase
         // Mock WahaService so no real HTTP calls are made during tests
         $wahaMock = Mockery::mock(WahaService::class);
         $wahaMock->shouldReceive('sendMessage')->andReturn(true);
+        $wahaMock->shouldReceive('getPhoneNumberByLid')->andReturn(null)->byDefault();
         $this->app->instance(WahaService::class, $wahaMock);
     }
 
@@ -469,5 +470,24 @@ class WahaWebhookFeatureTest extends TestCase
 
         // Only 1 job pushed!
         Queue::assertPushed(LoginMaganghubHeadless::class, 1);
+    }
+
+    public function test_format_chat_id_always_formats_to_c_us(): void
+    {
+        $service = new WahaService;
+
+        $this->assertSame('6285163235033@c.us', $service->formatChatId('6285163235033'));
+        $this->assertSame('6285163235033@c.us', $service->formatChatId('085163235033'));
+        $this->assertSame('6285163235033@c.us', $service->formatChatId('6285163235033@c.us'));
+
+        // If user has an LID, calling formatChatId with that LID converts to real phone number @c.us
+        InternUser::factory()->create([
+            'phone_number' => '6285163235033',
+            'whatsapp_lid' => '1990999888777',
+            'is_active' => true,
+        ]);
+
+        $this->assertSame('6285163235033@c.us', $service->formatChatId('1990999888777'));
+        $this->assertSame('6285163235033@c.us', $service->formatChatId('1990999888777@lid'));
     }
 }

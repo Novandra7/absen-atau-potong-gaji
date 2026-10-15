@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\InternUser;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -23,6 +24,7 @@ class WahaService
 
     /**
      * Format phone number to WAHA chat ID format (e.g. 628123456789@c.us).
+     * Always ensures that WhatsApp LIDs (@lid) are converted to real phone numbers.
      */
     public function formatChatId(string $phone): string
     {
@@ -32,11 +34,47 @@ class WahaService
             $cleanPhone = '628'.substr($cleanPhone, 2);
         }
 
+        // If an LID was passed, check if we have a linked InternUser and use their real phone number
+        if (class_exists(InternUser::class)) {
+            $user = InternUser::where('whatsapp_lid', $cleanPhone)->first();
+            if ($user && ! empty($user->phone_number)) {
+                $cleanPhone = InternUser::cleanPhoneNumber($user->phone_number);
+            }
+        }
+
         if (! str_ends_with($cleanPhone, '@c.us')) {
             $cleanPhone .= '@c.us';
         }
 
         return $cleanPhone;
+    }
+
+    /**
+     * Resolve a WhatsApp LID to a real phone number using WAHA API.
+     */
+    public function getPhoneNumberByLid(string $lid): ?string
+    {
+        $cleanLid = preg_replace('/[^0-9]/', '', $lid) ?? '';
+        if (empty($cleanLid)) {
+            return null;
+        }
+
+        try {
+            $response = $this->client()->get("{$this->baseUrl}/api/{$this->session}/lids/{$cleanLid}");
+            if ($response->successful()) {
+                $data = $response->json();
+                $rawPn = $data['pn'] ?? $data['phoneNumber'] ?? $data['id'] ?? null;
+                if ($rawPn) {
+                    $digits = preg_replace('/[^0-9]/', '', (string) $rawPn);
+
+                    return $digits ?: null;
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::debug("WAHA getPhoneNumberByLid failed for {$lid}: ".$e->getMessage());
+        }
+
+        return null;
     }
 
     /**

@@ -87,6 +87,16 @@ class WahaWebhookController extends Controller
             return response()->json(['status' => 'ignored_empty_message']);
         }
 
+        // Attempt to resolve incoming @lid to canonical phone number via WAHA API
+        $incomingLid = str_contains($rawFrom, '@lid') ? $senderDigits : null;
+        if ($incomingLid) {
+            $resolvedPn = $waha->getPhoneNumberByLid($incomingLid);
+            if ($resolvedPn) {
+                Log::info("WahaWebhook: Resolved LID {$incomingLid} to phone {$resolvedPn} via WAHA API");
+                $senderDigits = $resolvedPn;
+            }
+        }
+
         // 3. Whitelist Check (supports phone number and whatsapp_lid)
         if (! InternUser::isPhoneAuthorized($senderDigits, $rawFrom)) {
             Log::info("WahaWebhook: Message from unauthorized sender {$senderDigits} ({$rawFrom}). Ignoring.");
@@ -95,6 +105,10 @@ class WahaWebhookController extends Controller
         }
 
         $user = InternUser::findByPhoneOrLid($senderDigits, $rawFrom);
+        if ($user && $incomingLid && empty($user->whatsapp_lid)) {
+            $user->update(['whatsapp_lid' => $incomingLid]);
+        }
+
         $userPhone = $user?->phone_number ?? $senderDigits;
         $replyTarget = $userPhone;
 
