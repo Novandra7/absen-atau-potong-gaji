@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Jobs\GenerateDailyReport;
+use App\Jobs\SubmitMaganghubReport;
 use App\Models\DailyReport;
 use App\Models\InternUser;
 use App\Services\WahaService;
@@ -150,6 +151,63 @@ class WahaWebhookFeatureTest extends TestCase
             'id' => $report->id,
             'status' => DailyReport::STATUS_SUBMITTED,
         ]);
+    }
+
+    public function test_it_handles_kirim_command_and_dispatches_submit_job(): void
+    {
+        Queue::fake();
+
+        $today = Carbon::now('Asia/Makassar')->toDateString();
+
+        $report = DailyReport::factory()->create([
+            'report_date' => $today,
+            'sender_phone' => '6281234567890',
+            'activity_description' => 'Aktivitas yang siap dikirim',
+            'status' => DailyReport::STATUS_AWAITING_APPROVAL,
+        ]);
+
+        $response = $this->withHeaders(['X-Api-Key' => 'test_secret'])
+            ->postJson('/api/webhooks/waha', [
+                'event' => 'message',
+                'payload' => [
+                    'from' => '6281234567890@c.us',
+                    'fromMe' => false,
+                    'body' => 'KIRIM',
+                    'id' => 'msg_kirim_1',
+                ],
+            ]);
+
+        $response->assertStatus(200)
+            ->assertJson(['status' => 'submit_dispatched']);
+
+        Queue::assertPushed(SubmitMaganghubReport::class, function ($job) use ($report) {
+            return $job->report->id === $report->id;
+        });
+    }
+
+    public function test_it_handles_akun_or_sesi_command_and_returns_status(): void
+    {
+        $user = InternUser::factory()->create([
+            'phone_number' => '6281234567890',
+            'is_active' => true,
+        ]);
+
+        $response = $this->withHeaders(['X-Api-Key' => 'test_secret'])
+            ->postJson('/api/webhooks/waha', [
+                'event' => 'message',
+                'payload' => [
+                    'from' => '6281234567890@c.us',
+                    'fromMe' => false,
+                    'body' => 'SESI',
+                    'id' => 'msg_sesi_1',
+                ],
+            ]);
+
+        $response->assertStatus(200)
+            ->assertJson([
+                'status' => 'session_info_sent',
+                'has_session' => false,
+            ]);
     }
 
     public function test_it_handles_batal_command(): void

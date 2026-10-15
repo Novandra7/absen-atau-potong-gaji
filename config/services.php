@@ -49,4 +49,10 @@ return [
         'model' => env('GEMINI_MODEL', 'gemini-3.8-flash'),
     ],
 
+    'maganghub' => [
+        'headless' => env('MAGANGHUB_HEADLESS', true),
+        'node_path' => env('NODE_PATH', 'node'),
+        'puppeteer_executable_path' => env('PUPPETEER_EXECUTABLE_PATH'),
+    ],
+
 ];

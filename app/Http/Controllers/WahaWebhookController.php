@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Jobs\GenerateDailyReport;
+use App\Jobs\SubmitMaganghubReport;
 use App\Models\AutomationLog;
 use App\Models\DailyReport;
 use App\Models\InternUser;
@@ -102,8 +103,59 @@ class WahaWebhookController extends Controller
             })
             ->whereDate('report_date', $today);
 
-        // CASE 1: SELESAI / SUBMIT
-        if (in_array($upperBody, ['SELESAI', 'SUBMIT', 'DONE'], true)) {
+        // CASE: INFO SESI / AKUN
+        if (preg_match('/^(AKUN|SESI|LOGIN)/i', $body)) {
+            $hasSession = $user && $user->hasMagangSession();
+            $statusText = $hasSession ? '✅ *Sesi Aktif Tersimpan*' : '⚠️ *Belum Ada Sesi Aktif*';
+
+            $waha->sendMessage(
+                $replyTarget,
+                "🔐 *Status Sesi Login MagangHub*\n\n"
+                ."Status: {$statusText}\n\n"
+                ."Sistem menggunakan sesi tersimpan tanpa meminta passwordmu demi keamanan.\n\n"
+                .($hasSession
+                    ? 'Sesi kamu sudah aktif dan siap digunakan untuk kirim otomatis (cukup balas *KIRIM*).'
+                    : "Untuk menyimpan sesi pertama kali, jalankan perintah ini di laptop:\n`php artisan app:maganghub-login {$replyTarget}`")
+            );
+
+            return response()->json(['status' => 'session_info_sent', 'has_session' => $hasSession]);
+        }
+
+        // CASE 1: KIRIM / SUBMIT (Automated Headless Submission)
+        if (in_array($upperBody, ['KIRIM', 'SUBMIT', 'SEND'], true)) {
+            $report = $findReport()->latest()->first();
+
+            if (! $report) {
+                $waha->sendMessage(
+                    $replyTarget,
+                    "⚠️ Tidak ditemukan draf laporan aktif untuk hari ini ({$today}). Kirimkan catatan aktivitasmu terlebih dahulu."
+                );
+
+                return response()->json(['status' => 'no_report_found']);
+            }
+
+            if ($report->status === DailyReport::STATUS_SUBMITTED) {
+                $waha->sendMessage(
+                    $replyTarget,
+                    "ℹ️ Laporan hari ini ({$today}) sudah berstatus *SUBMITTED*."
+                );
+
+                return response()->json(['status' => 'already_submitted']);
+            }
+
+            // Dispatch automated headless browser submission
+            SubmitMaganghubReport::dispatch($report);
+
+            $waha->sendMessage(
+                $replyTarget,
+                "⏳ *Permintaan pengiriman diterima!* Sedang mengisi dan mengirimkan laporan ke portal MagangHub secara otomatis...\n\nMohon tunggu beberapa saat, bot akan mengirimkan screenshot bukti pengisian."
+            );
+
+            return response()->json(['status' => 'submit_dispatched']);
+        }
+
+        // CASE 1B: SELESAI / DONE
+        if (in_array($upperBody, ['SELESAI', 'DONE'], true)) {
             $report = $findReport()->latest()->first();
 
             if (! $report) {
@@ -115,6 +167,19 @@ class WahaWebhookController extends Controller
                 return response()->json(['status' => 'no_report_found']);
             }
 
+            // If user has automated credentials/session and report is not yet submitted, trigger auto submit
+            if ($user && $user->hasMagangCredentialsOrSession() && $report->status !== DailyReport::STATUS_SUBMITTED) {
+                SubmitMaganghubReport::dispatch($report);
+
+                $waha->sendMessage(
+                    $replyTarget,
+                    "⏳ *Permintaan pengiriman diterima!* Sedang mengisi dan mengirimkan laporan ke portal MagangHub secara otomatis...\n\nMohon tunggu beberapa saat, bot akan mengirimkan screenshot bukti pengisian."
+                );
+
+                return response()->json(['status' => 'submit_dispatched']);
+            }
+
+            // Manual confirmation fallback
             $report->update([
                 'status' => DailyReport::STATUS_SUBMITTED,
                 'submitted_at' => now(),

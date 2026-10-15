@@ -33,11 +33,11 @@ class GenerateDailyReportTest extends TestCase
                 'kendala' => 'Tidak ada kendala signifikan yang dihadapi hari ini.',
             ]);
 
-        // Mock WahaService to verify only the script message is sent
+        // Mock WahaService to verify the draft preview message is sent
         $sentMessages = [];
         $wahaMock = Mockery::mock(WahaService::class);
         $wahaMock->shouldReceive('sendMessage')
-            ->twice()
+            ->once()
             ->andReturnUsing(function ($phone, $message) use (&$sentMessages) {
                 $sentMessages[] = $message;
 
@@ -54,13 +54,12 @@ class GenerateDailyReportTest extends TestCase
         $this->assertEquals('Memperoleh pemahaman lebih lanjut mengenai Bruno API.', $report->lessons_learned);
         $this->assertEquals('Tidak ada kendala signifikan yang dihadapi hari ini.', $report->challenges);
 
-        // Verify 2 messages sent: the ready-to-paste script and the dashboard link
-        $this->assertCount(2, $sentMessages);
-        $this->assertStringContainsString('const values = {', $sentMessages[0]);
-        $this->assertStringContainsString('uraianAktivitas: `Menindaklanjuti pertanyaan terkait Bruno API Tool.`', $sentMessages[0]);
-        $this->assertStringContainsString("document.querySelectorAll('.daily-form textarea')", $sentMessages[0]);
-        $this->assertStringContainsString("document.querySelector('.review-confirmation input')?.click()", $sentMessages[0]);
-
-        $this->assertStringContainsString('https://monev.maganghub.kemnaker.go.id/dashboard', $sentMessages[1]);
+        // Verify preview message sent with action commands
+        $this->assertCount(1, $sentMessages);
+        $this->assertStringContainsString('Draf Laporan MagangHub Disiapkan!', $sentMessages[0]);
+        $this->assertStringContainsString('Menindaklanjuti pertanyaan terkait Bruno API Tool.', $sentMessages[0]);
+        $this->assertStringContainsString('Memperoleh pemahaman lebih lanjut mengenai Bruno API.', $sentMessages[0]);
+        $this->assertStringContainsString('Tidak ada kendala signifikan yang dihadapi hari ini.', $sentMessages[0]);
+        $this->assertStringContainsString('Balas *KIRIM*', $sentMessages[0]);
     }
 }

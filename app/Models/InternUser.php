@@ -22,6 +22,9 @@ class InternUser extends Model
         'name',
         'phone_number',
         'whatsapp_lid',
+        'maganghub_email',
+        'maganghub_password',
+        'maganghub_auto_submit',
         'is_active',
         'notes',
     ];
@@ -35,7 +38,42 @@ class InternUser extends Model
     {
         return [
             'is_active' => 'boolean',
+            'maganghub_auto_submit' => 'boolean',
+            'maganghub_password' => 'encrypted',
         ];
+    }
+
+    /**
+     * Get the session file storage path for this intern user.
+     */
+    public function getSessionFilePath(): string
+    {
+        return storage_path('app/maganghub_sessions/'.$this->phone_number.'.json');
+    }
+
+    /**
+     * Get the Chrome user data directory path for this intern user.
+     */
+    public function getProfilePath(): string
+    {
+        return storage_path('app/maganghub_profiles/'.$this->phone_number);
+    }
+
+    /**
+     * Check if user has an existing saved session file or profile.
+     */
+    public function hasMagangSession(): bool
+    {
+        return file_exists($this->getProfilePath()) || file_exists($this->getSessionFilePath());
+    }
+
+    /**
+     * Check if user has credentials or an existing session file.
+     */
+    public function hasMagangCredentialsOrSession(): bool
+    {
+        return file_exists($this->getSessionFilePath())
+            || (! empty($this->maganghub_email) && ! empty($this->maganghub_password));
     }
 
     /**

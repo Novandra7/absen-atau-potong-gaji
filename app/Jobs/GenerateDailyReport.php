@@ -72,14 +72,17 @@ class GenerateDailyReport implements ShouldQueue
         $user = InternUser::findByPhoneOrLid($this->report->sender_phone);
         $target = $user ? $user->phone_number : $this->report->sender_phone;
 
-        // Send directly the ready-to-copy JavaScript script
-        $waha->sendMessage($target, $script);
+        // Send draft preview with one-tap action commands
+        $previewMessage = "📋 *Draf Laporan MagangHub Disiapkan!*\n\n"
+            ."*1. Uraian Aktivitas:*\n{$draft['uraianAktivitas']}\n\n"
+            ."*2. Pembelajaran:*\n{$draft['pembelajaran']}\n\n"
+            ."*3. Kendala:*\n{$draft['kendala']}\n\n"
+            ."---\n"
+            ."🚀 *Aksi Selanjutnya:*\n"
+            ."• Balas *KIRIM* 👉 untuk langsung submit otomatis ke MagangHub (tanpa buka web)\n"
+            ."• Balas *EDIT: [catatan]* 👉 untuk revisi draf\n"
+            .'• Balas *SCRIPT* 👉 jika ingin script console manual';
 
-        // Send clickable dashboard link and brief instructions
-        $waha->sendMessage(
-            $target,
-            "🌐 *Dashboard MagangHub:*\nhttps://monev.maganghub.kemnaker.go.id/dashboard\n\n"
-            ."💡 *Langkah Pengisian:*\n1. Buka link dashboard di atas pada browser laptop/PC\n2. Tekan tombol *F12* (atau klik kanan -> Inspect -> tab Console)\n3. Paste script di atas dan tekan *Enter*"
-        );
+        $waha->sendMessage($target, $previewMessage);
     }
 }

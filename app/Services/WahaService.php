@@ -90,17 +90,18 @@ class WahaService
 
             if (file_exists($filePathOrBase64)) {
                 $mimeType = mime_content_type($filePathOrBase64) ?: 'image/png';
-                $base64 = base64_encode(file_get_contents($filePathOrBase64));
+                $base64 = base64_encode((string) file_get_contents($filePathOrBase64));
                 $payload['file'] = [
                     'mimetype' => $mimeType,
                     'filename' => basename($filePathOrBase64),
-                    'data' => "data:{$mimeType};base64,{$base64}",
+                    'data' => $base64,
                 ];
             } else {
+                $cleanBase64 = preg_replace('/^data:image\/[a-z]+;base64,/', '', $filePathOrBase64);
                 $payload['file'] = [
                     'mimetype' => 'image/png',
                     'filename' => $filename,
-                    'data' => $filePathOrBase64,
+                    'data' => (string) $cleanBase64,
                 ];
             }
 
