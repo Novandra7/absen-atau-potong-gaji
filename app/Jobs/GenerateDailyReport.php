@@ -68,9 +68,9 @@ class GenerateDailyReport implements ShouldQueue
             ],
         ]);
 
-        // Resolve WhatsApp target (always send to user's canonical phone number for reliable delivery)
+        // Resolve WhatsApp target (prefers LID if user chats via LID to avoid duplicate delivery)
         $user = InternUser::findByPhoneOrLid($this->report->sender_phone);
-        $target = $user ? $user->phone_number : $this->report->sender_phone;
+        $target = $user ? $user->getPreferredChatId() : $this->report->sender_phone;
 
         // Send draft preview with one-tap action commands
         $previewMessage = "📋 *Draf Laporan MagangHub Disiapkan!*\n\n"

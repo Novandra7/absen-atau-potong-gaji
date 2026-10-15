@@ -78,7 +78,8 @@ class SendWhatsAppReminder implements ShouldQueue
                 ."Cukup balas pesan ini dengan catatan apa saja yang kamu kerjakan hari ini, AI akan otomatis menyusunnya dan menyiapkan script console pengisian otomatis.\n\n"
                 ."🌐 *Link Dashboard MagangHub:*\nhttps://monev.maganghub.kemnaker.go.id/dashboard";
 
-            $sent = $waha->sendMessage($phone, $message);
+            $target = $user ? $user->getPreferredChatId() : $phone;
+            $sent = $waha->sendMessage($target, $message);
 
             AutomationLog::query()->create([
                 'daily_report_id' => $report->id,

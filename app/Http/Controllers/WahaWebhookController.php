@@ -126,7 +126,7 @@ class WahaWebhookController extends Controller
         }
 
         $userPhone = $user?->phone_number ?? $senderDigits;
-        $replyTarget = $userPhone;
+        $replyTarget = str_contains($rawFrom, '@lid') ? $rawFrom : $userPhone;
 
         // 4. Idempotency Check (Persistent Database Cache Lock)
         if (! empty($messageId)) {
@@ -213,7 +213,9 @@ class WahaWebhookController extends Controller
                 $user->update($attributes);
             }
 
-            $replyTarget = $user->phone_number;
+            if (! str_contains((string) $replyTarget, '@lid')) {
+                $replyTarget = $user->phone_number;
+            }
 
             $waha->sendMessage(
                 $replyTarget,

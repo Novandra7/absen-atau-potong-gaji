@@ -77,6 +77,19 @@ class InternUser extends Model
     }
 
     /**
+     * Get the preferred WAHA Chat ID for messaging this user.
+     * Prefers whatsapp_lid (@lid) if known to prevent duplicate message routing in WAHA/Baileys.
+     */
+    public function getPreferredChatId(): string
+    {
+        if (! empty($this->whatsapp_lid)) {
+            return $this->whatsapp_lid.'@lid';
+        }
+
+        return $this->phone_number;
+    }
+
+    /**
      * @return HasMany<DailyReport, $this>
      */
     public function reports(): HasMany

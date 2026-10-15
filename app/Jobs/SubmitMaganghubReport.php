@@ -38,7 +38,7 @@ class SubmitMaganghubReport implements ShouldQueue
         ]);
 
         $user = InternUser::findByPhoneOrLid($this->report->sender_phone);
-        $target = $user ? $user->phone_number : $this->report->sender_phone;
+        $target = $user ? $user->getPreferredChatId() : $this->report->sender_phone;
         $reportDate = $this->report->report_date ? $this->report->report_date->toDateString() : Carbon::now('Asia/Makassar')->toDateString();
 
         $result = $automator->submitReport($this->report, submitForm: $this->submitForm);

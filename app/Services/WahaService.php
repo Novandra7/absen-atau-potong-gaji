@@ -23,30 +23,39 @@ class WahaService
     }
 
     /**
-     * Format phone number to WAHA chat ID format (e.g. 628123456789@c.us).
-     * Always ensures that WhatsApp LIDs (@lid) are converted to real phone numbers.
+     * Format phone number or WhatsApp ID to WAHA chat ID format.
+     * Preserves @lid and @c.us identifiers without forced cross-protocol conversion.
      */
-    public function formatChatId(string $phone): string
+    public function formatChatId(string $phoneOrChatId): string
     {
-        $cleanPhone = preg_replace('/[^0-9]/', '', $phone) ?? '';
+        $target = trim($phoneOrChatId);
 
-        if (str_starts_with($cleanPhone, '08')) {
-            $cleanPhone = '628'.substr($cleanPhone, 2);
+        // If explicitly formatted as @lid, @c.us, or @g.us, preserve it directly
+        if (str_ends_with($target, '@lid') || str_ends_with($target, '@c.us') || str_ends_with($target, '@g.us')) {
+            return $target;
         }
 
-        // If an LID was passed, check if we have a linked InternUser and use their real phone number
+        $clean = preg_replace('/[^0-9]/', '', $target) ?? '';
+
+        // If the clean identifier matches a known user's whatsapp_lid, route to @lid
         if (class_exists(InternUser::class)) {
-            $user = InternUser::where('whatsapp_lid', $cleanPhone)->first();
-            if ($user && ! empty($user->phone_number)) {
-                $cleanPhone = InternUser::cleanPhoneNumber($user->phone_number);
+            $userByLid = InternUser::where('whatsapp_lid', $clean)->first();
+            if ($userByLid) {
+                return $clean.'@lid';
+            }
+
+            // If it matches a user phone who has an active LID, use their LID to avoid double delivery
+            $userByPhone = InternUser::findByPhone($clean);
+            if ($userByPhone && ! empty($userByPhone->whatsapp_lid)) {
+                return $userByPhone->whatsapp_lid.'@lid';
             }
         }
 
-        if (! str_ends_with($cleanPhone, '@c.us')) {
-            $cleanPhone .= '@c.us';
+        if (str_starts_with($clean, '08')) {
+            $clean = '628'.substr($clean, 2);
         }
 
-        return $cleanPhone;
+        return $clean.'@c.us';
     }
 
     /**

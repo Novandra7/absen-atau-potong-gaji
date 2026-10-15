@@ -351,6 +351,36 @@ class WahaWebhookFeatureTest extends TestCase
         });
     }
 
+    public function test_it_handles_login_registration_command_from_lid_and_preserves_lid_target(): void
+    {
+        Queue::fake();
+
+        InternUser::factory()->create([
+            'phone_number' => '6285163235033',
+            'whatsapp_lid' => '199012191870982',
+            'is_active' => true,
+        ]);
+
+        $response = $this->withHeaders(['X-Api-Key' => 'test_secret'])
+            ->postJson('/api/webhooks/waha', [
+                'event' => 'message',
+                'payload' => [
+                    'from' => '199012191870982@lid',
+                    'fromMe' => false,
+                    'body' => 'LOGIN user@example.com Secret123!',
+                    'id' => 'msg_login_lid_001',
+                ],
+            ]);
+
+        $response->assertStatus(200)
+            ->assertJson(['status' => 'login_dispatched']);
+
+        Queue::assertPushed(LoginMaganghubHeadless::class, function ($job) {
+            return $job->email === 'user@example.com' &&
+                $job->replyTarget === '199012191870982@lid';
+        });
+    }
+
     public function test_it_handles_akun_info_command(): void
     {
         $response = $this->withHeaders(['X-Api-Key' => 'test_secret'])
@@ -476,7 +506,7 @@ class WahaWebhookFeatureTest extends TestCase
         Queue::assertPushed(LoginMaganghubHeadless::class, 1);
     }
 
-    public function test_format_chat_id_always_formats_to_c_us(): void
+    public function test_format_chat_id_preserves_lid_and_c_us(): void
     {
         $service = new WahaService;
 
@@ -484,15 +514,19 @@ class WahaWebhookFeatureTest extends TestCase
         $this->assertSame('6285163235033@c.us', $service->formatChatId('085163235033'));
         $this->assertSame('6285163235033@c.us', $service->formatChatId('6285163235033@c.us'));
 
-        // If user has an LID, calling formatChatId with that LID converts to real phone number @c.us
-        InternUser::factory()->create([
+        // Direct @lid formatting should be preserved
+        $this->assertSame('1990999888777@lid', $service->formatChatId('1990999888777@lid'));
+
+        // If user has an LID, routing with that LID preserves @lid to avoid double delivery in WAHA/Baileys
+        $user = InternUser::factory()->create([
             'phone_number' => '6285163235033',
             'whatsapp_lid' => '1990999888777',
             'is_active' => true,
         ]);
 
-        $this->assertSame('6285163235033@c.us', $service->formatChatId('1990999888777'));
-        $this->assertSame('6285163235033@c.us', $service->formatChatId('1990999888777@lid'));
+        $this->assertSame('1990999888777@lid', $user->getPreferredChatId());
+        $this->assertSame('1990999888777@lid', $service->formatChatId('1990999888777'));
+        $this->assertSame('1990999888777@lid', $service->formatChatId('1990999888777@lid'));
     }
 
     public function test_it_ignores_historical_or_replayed_messages_older_than_3_minutes(): void

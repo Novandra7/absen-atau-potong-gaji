@@ -57,7 +57,7 @@ class LoginMaganghubHeadless implements ShouldBeUnique, ShouldQueue
                 ? $this->userOrPhone
                 : InternUser::findByPhone($phone);
 
-            $target = $this->replyTarget ?: $phone;
+            $target = $this->replyTarget ?: ($user ? $user->getPreferredChatId() : $phone);
             $now = Carbon::now('Asia/Makassar')->format('d M Y H:i:s');
 
             Log::info("LoginMaganghubHeadless: Starting login for {$phone} ({$this->email})");
