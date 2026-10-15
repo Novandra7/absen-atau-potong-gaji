@@ -20,6 +20,7 @@ services:
       WAHA_BASE_URL: ${WAHA_BASE_URL:-http://kref-waha:3000}
       WAHA_API_KEY: ${WAHA_API_KEY}
       WAHA_SESSION: ${WAHA_SESSION:-maganghub}
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium-browser
     volumes:
       - sqlite_data:/var/www/html/database/data
       - storage_data:/var/www/html/storage/app

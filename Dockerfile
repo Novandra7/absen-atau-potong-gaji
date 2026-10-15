@@ -37,6 +37,7 @@ COPY . .
 COPY --from=vendor /app/vendor ./vendor
 
 RUN npm run build
+RUN npm prune --omit=dev
 
 
 ##############################################
@@ -46,6 +47,9 @@ FROM php:8.3-fpm-alpine AS app
 
 WORKDIR /var/www/html
 
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser \
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+
 RUN apk add --no-cache \
         nginx \
         supervisor \
@@ -53,6 +57,14 @@ RUN apk add --no-cache \
         curl \
         git \
         unzip \
+        nodejs \
+        npm \
+        chromium \
+        nss \
+        freetype \
+        harfbuzz \
+        ca-certificates \
+        ttf-freefont \
         libzip-dev \
         icu-dev \
         oniguruma-dev \
@@ -75,8 +87,9 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 # App source
 COPY . .
 
-# Vendor & compiled frontend assets from previous stages
+# Vendor, node_modules & compiled frontend assets from previous stages
 COPY --from=vendor /app/vendor ./vendor
+COPY --from=frontend /app/node_modules ./node_modules
 COPY --from=frontend /app/public/build ./public/build
 
 # Container configuration files
