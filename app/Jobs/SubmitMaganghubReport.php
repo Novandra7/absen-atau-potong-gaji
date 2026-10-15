@@ -16,6 +16,10 @@ class SubmitMaganghubReport implements ShouldQueue
 {
     use Queueable;
 
+    public int $tries = 1;
+
+    public int $timeout = 200;
+
     public function __construct(
         public DailyReport $report,
         public bool $submitForm = true

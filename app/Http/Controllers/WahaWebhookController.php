@@ -70,8 +70,17 @@ class WahaWebhookController extends Controller
         $rawId = $payload['id'] ?? $payload['_data']['id'] ?? $payload['key']['id'] ?? null;
         if (is_array($rawId)) {
             $messageId = (string) ($rawId['_serialized'] ?? $rawId['id'] ?? '');
+            $stanzaId = (string) ($rawId['id'] ?? '');
         } else {
             $messageId = (string) ($rawId ?? '');
+            $stanzaId = $messageId;
+        }
+
+        // WhatsApp message IDs are structured like false_628xxx@c.us_3EB0xxx or false_xxx@lid_3EB0xxx
+        // The last segment is the unique stanza ID shared across @c.us and @lid events!
+        if (str_contains($messageId, '_')) {
+            $parts = explode('_', $messageId);
+            $stanzaId = end($parts);
         }
 
         if (empty($body) || empty($senderDigits)) {
@@ -107,6 +116,15 @@ class WahaWebhookController extends Controller
             }
         }
 
+        // Atomic stanza lock: Drops duplicate events when WAHA sends the same message via both @c.us and @lid
+        if (! empty($stanzaId) && $stanzaId !== $messageId) {
+            if (! Cache::add('waha_stanza_lock_'.$stanzaId, true, now()->addMinutes(10))) {
+                Log::info("WahaWebhook: Duplicate message stanza [{$stanzaId}] ignored by atomic stanza lock.");
+
+                return response()->json(['status' => 'already_processed_duplicate_lock']);
+            }
+        }
+
         // Content & Sender debounce lock (15 seconds):
         // Prevents WAHA double-event delivery (e.g. @c.us vs @lid, 'message' vs 'message.any')
         $contentLockKey = 'waha_sender_body_lock_'.md5($userPhone.'_'.$upperBody);
@@ -132,10 +150,10 @@ class WahaWebhookController extends Controller
             $email = trim($matches[2]);
             $password = trim($matches[3]);
 
-            // Debounce by email (30s window): Guarantees that only ONE login process runs per email, regardless of webhook retries or LID aliases
+            // Debounce by email (60s window): Guarantees that only ONE login process runs per email, regardless of webhook retries or LID aliases
             $loginEmailLockKey = 'waha_login_email_lock_'.md5(strtolower($email));
-            if (! Cache::add($loginEmailLockKey, true, now()->addSeconds(30))) {
-                Log::info("WahaWebhook: Duplicate LOGIN for email [{$email}] ignored within 30s window.");
+            if (! Cache::add($loginEmailLockKey, true, now()->addSeconds(60))) {
+                Log::info("WahaWebhook: Duplicate LOGIN for email [{$email}] ignored within 60s window.");
 
                 return response()->json(['status' => 'already_processed_duplicate_login']);
             }
@@ -166,6 +184,8 @@ class WahaWebhookController extends Controller
                 }
                 $user->update($attributes);
             }
+
+            $replyTarget = $user->phone_number;
 
             $waha->sendMessage(
                 $replyTarget,

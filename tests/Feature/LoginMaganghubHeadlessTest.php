@@ -7,6 +7,7 @@ use App\Models\InternUser;
 use App\Services\MagangHubAutomationService;
 use App\Services\WahaService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Mockery;
 use Tests\TestCase;
 
@@ -83,6 +84,26 @@ class LoginMaganghubHeadlessTest extends TestCase
             ->andReturn(true);
 
         $job = new LoginMaganghubHeadless($user, 'novan@example.com', 'WrongPassword!');
+        $job->handle($automatorMock, $wahaMock);
+    }
+
+    public function test_it_skips_execution_when_another_job_is_already_running_for_same_email(): void
+    {
+        $user = InternUser::factory()->create([
+            'phone_number' => '6285163235033',
+            'is_active' => true,
+        ]);
+
+        Cache::put('login_maganghub_running_novan@example.com', true, 60);
+
+        $automatorMock = Mockery::mock(MagangHubAutomationService::class);
+        $automatorMock->shouldNotReceive('loginHeadless');
+
+        $wahaMock = Mockery::mock(WahaService::class);
+        $wahaMock->shouldNotReceive('sendMessage');
+        $wahaMock->shouldNotReceive('sendImage');
+
+        $job = new LoginMaganghubHeadless($user, 'novan@example.com', 'Password123!');
         $job->handle($automatorMock, $wahaMock);
     }
 }
