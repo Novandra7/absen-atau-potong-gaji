@@ -32,52 +32,62 @@ class ReportGeneratorService
             return $this->fallbackDraft($rawNotes);
         }
 
-        try {
-            $url = "https://generativelanguage.googleapis.com/v1beta/models/{$this->model}:generateContent?key={$this->apiKey}";
+        $modelsToTry = array_values(array_unique(array_filter([
+            $this->model,
+            'gemini-flash-lite-latest',
+            'gemini-3.5-flash-lite',
+            'gemini-3.1-flash-lite',
+            'gemini-flash-latest',
+        ])));
 
-            $response = Http::retry(2, 300)->timeout(30)->post($url, [
-                'contents' => [
-                    [
-                        'parts' => [
-                            ['text' => $prompt],
+        foreach ($modelsToTry as $currentModel) {
+            try {
+                $url = "https://generativelanguage.googleapis.com/v1beta/models/{$currentModel}:generateContent?key={$this->apiKey}";
+
+                $response = Http::timeout(30)->post($url, [
+                    'contents' => [
+                        [
+                            'parts' => [
+                                ['text' => $prompt],
+                            ],
                         ],
                     ],
-                ],
-                'generationConfig' => [
-                    'temperature' => 0.2,
-                    'responseMimeType' => 'application/json',
-                ],
-            ]);
+                    'generationConfig' => [
+                        'temperature' => 0.2,
+                        'responseMimeType' => 'application/json',
+                    ],
+                ]);
 
-            if ($response->successful()) {
-                $data = $response->json();
-                $text = $data['candidates'][0]['content']['parts'][0]['text'] ?? null;
+                if ($response->successful()) {
+                    $data = $response->json();
+                    $text = $data['candidates'][0]['content']['parts'][0]['text'] ?? null;
 
-                if ($text) {
-                    $decoded = json_decode($text, true);
-                    if (is_array($decoded) && isset($decoded['uraianAktivitas'], $decoded['pembelajaran'], $decoded['kendala'])) {
-                        return [
-                            'uraianAktivitas' => $this->ensureMinLength(trim((string) $decoded['uraianAktivitas']), 'uraianAktivitas'),
-                            'pembelajaran' => $this->ensureMinLength(trim((string) $decoded['pembelajaran']), 'pembelajaran'),
-                            'kendala' => $this->ensureMinLength(trim((string) $decoded['kendala']), 'kendala'),
-                        ];
+                    if ($text) {
+                        $decoded = json_decode($text, true);
+                        if (is_array($decoded) && isset($decoded['uraianAktivitas'], $decoded['pembelajaran'], $decoded['kendala'])) {
+                            return [
+                                'uraianAktivitas' => $this->ensureMinLength(trim((string) $decoded['uraianAktivitas']), 'uraianAktivitas'),
+                                'pembelajaran' => $this->ensureMinLength(trim((string) $decoded['pembelajaran']), 'pembelajaran'),
+                                'kendala' => $this->ensureMinLength(trim((string) $decoded['kendala']), 'kendala'),
+                            ];
+                        }
                     }
                 }
+
+                Log::warning("Gemini API error with model {$currentModel}, trying fallback model if available.", [
+                    'status' => $response->status(),
+                    'body' => $response->json() ?? $response->body(),
+                ]);
+            } catch (\Throwable $e) {
+                Log::warning("Gemini API exception with model {$currentModel}", [
+                    'error' => $e->getMessage(),
+                ]);
             }
-
-            Log::error('Gemini API generateContent error', [
-                'status' => $response->status(),
-                'body' => $response->json() ?? $response->body(),
-            ]);
-
-            return $this->fallbackDraft($rawNotes);
-        } catch (\Throwable $e) {
-            Log::error('Gemini API call exception', [
-                'error' => $e->getMessage(),
-            ]);
-
-            return $this->fallbackDraft($rawNotes);
         }
+
+        Log::error('All Gemini AI candidate models failed. Using static fallback template.');
+
+        return $this->fallbackDraft($rawNotes);
     }
 
     /**
