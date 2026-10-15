@@ -253,3 +253,46 @@ Artisan::command('app:submit-report {phone} {--preview}', function (string $phon
     SubmitMaganghubReport::dispatchSync($report, submitForm: ! $preview);
     $this->info('✅ Proses pengiriman laporan selesai dijalankan.');
 })->purpose('Mengirim draf laporan hari ini ke MagangHub menggunakan headless browser');
+
+// Artisan command: Cek status sesi login MagangHub untuk user
+Artisan::command('app:check-session {phone?}', function (?string $phone = null) {
+    $phones = [];
+    if (! empty($phone)) {
+        $phones[] = InternUser::cleanPhoneNumber($phone);
+    } else {
+        $phones = InternUser::getAllActivePhones();
+    }
+
+    if (empty($phones)) {
+        $this->warn('Tidak ada user aktif yang terdaftar.');
+
+        return;
+    }
+
+    $this->info('=== STATUS SESI LOGIN MAGANGHUB ===');
+
+    foreach ($phones as $p) {
+        $user = InternUser::findByPhone($p);
+        $name = $user ? $user->name : 'Unknown';
+
+        $sessionFile = storage_path("app/maganghub_sessions/{$p}.json");
+        $profileDir = storage_path("app/maganghub_profiles/{$p}");
+
+        $hasSessionFile = file_exists($sessionFile);
+        $hasProfileDir = is_dir($profileDir) && file_exists("{$profileDir}/Default");
+
+        $this->line("\n-------------------------------------------");
+        $this->info("User: {$name} ({$p})");
+        $this->line("• Lokasi Profil Browser: {$profileDir}");
+        $this->line('  Status: '.($hasProfileDir ? '✅ Ditemukan (Folder Default terdeteksi)' : '❌ Tidak ditemukan / Kosong'));
+
+        $this->line("• Lokasi File Session: {$sessionFile}");
+        $this->line('  Status: '.($hasSessionFile ? '✅ Ditemukan (Update: '.date('Y-m-d H:i:s', filemtime($sessionFile)).')' : '❌ Tidak ditemukan'));
+
+        if ($hasProfileDir || $hasSessionFile) {
+            $this->info('👉 KESIMPULAN: ✅ Sesi MagangHub SIAP DIGUNAKAN untuk otomasi.');
+        } else {
+            $this->error('👉 KESIMPULAN: ❌ Sesi BELUM TERSEDIA. Silakan salin folder profil dari laptop.');
+        }
+    }
+})->purpose('Mengecek ketersediaan profil dan sesi login MagangHub');
