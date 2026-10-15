@@ -90,6 +90,133 @@ async function restoreSession(page, sessionFile) {
 }
 
 /**
+ * Perform automated login on Kemnaker SSO and wait for MagangHub dashboard.
+ */
+async function performHeadlessLogin(page, email, password) {
+  if (!email || !password) {
+    throw new Error('Email dan password Kemnaker diperlukan untuk login otomatis.');
+  }
+
+  // If not yet on Kemnaker login page, check if we need to navigate or wait
+  const current = page.url();
+  if (!current.includes('account.kemnaker.go.id') && !current.includes('/login')) {
+    const navWaitStart = Date.now();
+    while (Date.now() - navWaitStart < 15000) {
+      const cur = page.url();
+      if (cur.includes('account.kemnaker.go.id') || cur.includes('/login')) {
+        break;
+      }
+      if (cur.includes('/dashboard')) {
+        const hasLogin = await page.evaluate(() => {
+          return !!document.querySelector('input#username, input#password');
+        }).catch(() => false);
+        if (!hasLogin) {
+          return true; // Already on dashboard!
+        }
+      }
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+
+  // If still not on login page, force navigate to login URL
+  if (!page.url().includes('account.kemnaker.go.id') && !page.url().includes('/login')) {
+    await page.goto('https://account.kemnaker.go.id/auth/login', {
+      waitUntil: 'networkidle2',
+      timeout: 30000,
+    });
+  }
+
+  // Wait for #username and #password
+  await page.waitForSelector('#username, input[name="username"]', { visible: true, timeout: 25000 });
+  await page.waitForSelector('#password, input[type="password"]', { visible: true, timeout: 20000 });
+
+  // Clear and fill username
+  const userInput = await page.$('#username, input[name="username"]');
+  await userInput.click({ clickCount: 3 });
+  await page.keyboard.press('Backspace');
+  await page.type('#username, input[name="username"]', email, { delay: 30 });
+
+  // Clear and fill password
+  const passInput = await page.$('#password, input[type="password"]');
+  await passInput.click({ clickCount: 3 });
+  await page.keyboard.press('Backspace');
+  await page.type('#password, input[type="password"]', password, { delay: 30 });
+
+  // Submit form
+  const submitBtn = await page.$('button[type="submit"]');
+  if (!submitBtn) {
+    throw new Error('Tombol submit login tidak ditemukan pada halaman Kemnaker.');
+  }
+
+  await Promise.all([
+    submitBtn.click(),
+    page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 35000 }).catch(() => null),
+  ]);
+
+  // Wait for redirect to MagangHub dashboard
+  const startTime = Date.now();
+  while (Date.now() - startTime < 40000) {
+    const curUrl = page.url();
+
+    // Did we reach MagangHub dashboard?
+    if (curUrl.includes('monev.maganghub.kemnaker.go.id') && curUrl.includes('/dashboard')) {
+      const hasLoginInputs = await page.evaluate(() => {
+        return !!document.querySelector('input#username, input#password');
+      }).catch(() => false);
+      if (!hasLoginInputs) {
+        return true; // Success!
+      }
+    }
+
+    // Check if there is an error message on the page
+    const errorMsg = await page.evaluate(() => {
+      const form = document.querySelector('form');
+      if (form) {
+        const formText = form.innerText || '';
+        if (
+          formText.includes('tidak benar') ||
+          formText.includes('salah') ||
+          formText.includes('tidak ditemukan') ||
+          formText.includes('gagal') ||
+          formText.includes('tidak terdaftar')
+        ) {
+          const specific = Array.from(form.querySelectorAll('div, p, span')).find((el) => {
+            const t = (el.innerText || '').trim();
+            return (
+              t.length > 5 &&
+              t.length < 200 &&
+              (t.includes('tidak benar') || t.includes('salah') || t.includes('tidak ditemukan') || t.includes('tidak terdaftar'))
+            );
+          });
+          if (specific) {
+            return specific.innerText.trim();
+          }
+        }
+      }
+      const alertEl = document.querySelector('.alert-danger, .invalid-feedback, [role="alert"], .alert');
+      if (alertEl && alertEl.innerText && alertEl.innerText.trim().length > 3) {
+        return alertEl.innerText.trim();
+      }
+      return null;
+    }).catch(() => null);
+
+    if (errorMsg && curUrl.includes('account.kemnaker.go.id')) {
+      throw new Error(`Login Kemnaker gagal: ${errorMsg}`);
+    }
+
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+
+  // If timeout waiting for dashboard
+  const finalUrl = page.url();
+  if (finalUrl.includes('monev.maganghub.kemnaker.go.id') && finalUrl.includes('/dashboard')) {
+    return true;
+  }
+
+  throw new Error(`Login timeout atau tidak berhasil diarahkan ke dashboard MagangHub. URL saat ini: ${finalUrl}`);
+}
+
+/**
  * Main automation function.
  */
 async function run() {
@@ -169,39 +296,67 @@ async function run() {
     });
 
     if (loginOnly) {
-      console.error('Silakan login di jendela browser Chrome yang terbuka...');
+      if (email && password) {
+        console.error('Memulai proses login otomatis (headless) menggunakan akun Kemnaker...');
+        await performHeadlessLogin(page, email, password);
+      } else if (headless) {
+        throw new Error('Email dan password diperlukan untuk login headless tanpa tampilan GUI.');
+      } else {
+        console.error('Silakan login di jendela browser Chrome yang terbuka...');
 
-      const startTime = Date.now();
-      let loggedIn = false;
+        const startTime = Date.now();
+        let loggedIn = false;
 
-      while (Date.now() - startTime < 300000) { // 5 minutes max
-        const url = page.url();
-        if (url.includes('/dashboard') && !url.includes('/login') && !url.includes('account.kemnaker.go.id')) {
-          // Verify we are truly on dashboard and not on a login form
-          const hasLoginForm = await page.evaluate(() => {
-            return !!document.querySelector('input#username, input#password, form[action*="login"]');
-          }).catch(() => true);
+        while (Date.now() - startTime < 300000) { // 5 minutes max
+          const url = page.url();
+          if (url.includes('/dashboard') && !url.includes('/login') && !url.includes('account.kemnaker.go.id')) {
+            const hasLoginForm = await page.evaluate(() => {
+              return !!document.querySelector('input#username, input#password, form[action*="login"]');
+            }).catch(() => true);
 
-          if (!hasLoginForm) {
-            loggedIn = true;
-            break;
+            if (!hasLoginForm) {
+              loggedIn = true;
+              break;
+            }
           }
+          await new Promise((r) => setTimeout(r, 1500));
         }
-        await new Promise((r) => setTimeout(r, 1500));
-      }
 
-      if (!loggedIn) {
-        throw new Error('Timeout: Login manual tidak selesai dalam 5 menit.');
+        if (!loggedIn) {
+          throw new Error('Timeout: Login manual tidak selesai dalam 5 menit.');
+        }
       }
 
       // Wait a few seconds for tokens and cookies to settle
       await new Promise((r) => setTimeout(r, 3000));
 
+      // Ensure dashboard is loaded
+      if (!page.url().includes('/dashboard')) {
+        await page.goto('https://monev.maganghub.kemnaker.go.id/dashboard', {
+          waitUntil: 'networkidle2',
+          timeout: 30000,
+        }).catch(() => null);
+      }
+
+      if (screenshotPath) {
+        const scDir = path.dirname(screenshotPath);
+        if (!fs.existsSync(scDir)) {
+          fs.mkdirSync(scDir, { recursive: true });
+        }
+        await page.screenshot({ path: screenshotPath, fullPage: Boolean(fullPage) });
+      }
+
       if (sessionFile) {
         await saveSession(page, sessionFile);
       }
 
-      console.log(JSON.stringify({ success: true, message: 'Login berhasil dan sesi tersimpan.' }));
+      console.log(
+        JSON.stringify({
+          success: true,
+          screenshot: screenshotPath || null,
+          message: 'Login otomatis berhasil! Sesi MagangHub tersimpan dan aktif.',
+        })
+      );
       await browser.close();
       return;
     }
@@ -222,9 +377,18 @@ async function run() {
     const currentUrl = page.url();
     // 3. Handle login if redirected to SSO / Login
     if (currentUrl.includes('account.kemnaker.go.id') || currentUrl.includes('/login')) {
-      throw new Error(
-        'Sesi login MagangHub belum ada atau telah kedaluwarsa. Silakan lakukan login manual terlebih dahulu via perintah: php artisan app:maganghub-login'
-      );
+      if (email && password) {
+        console.error('Sesi MagangHub kedaluwarsa atau belum ada. Mencoba auto-login headless dengan akun tersimpan...');
+        await performHeadlessLogin(page, email, password);
+        await new Promise((r) => setTimeout(r, 3000));
+        if (sessionFile) {
+          await saveSession(page, sessionFile);
+        }
+      } else {
+        throw new Error(
+          'Sesi login MagangHub belum ada atau telah kedaluwarsa. Silakan hubungkan akun via WhatsApp: LOGIN <email> <password> atau jalankan: php artisan app:maganghub-login-headless'
+        );
+      }
     }
 
     // Ensure we are on dashboard
@@ -251,15 +415,6 @@ async function run() {
           message: 'Berhasil membuka dashboard MagangHub dan mengambil screenshot bukti sesi login aktif.',
         })
       );
-      await browser.close();
-      return;
-    }
-
-    if (loginOnly) {
-      if (sessionFile) {
-        await saveSession(page, sessionFile);
-      }
-      console.log(JSON.stringify({ success: true, message: 'Sesi login berhasil diperbarui dan disimpan.' }));
       await browser.close();
       return;
     }

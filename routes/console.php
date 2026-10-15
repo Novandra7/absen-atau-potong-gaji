@@ -191,15 +191,98 @@ Artisan::command('app:set-credentials {phone} {email} {password}', function (str
     $this->line("Email: {$email}");
 })->purpose('Menyimpan atau memperbarui email dan password MagangHub user');
 
-// Artisan command: Buka browser interaktif untuk login manual dan simpan session cookies
-Artisan::command('app:maganghub-login {phone}', function (string $phone) {
+// Artisan command: Login headless otomatis menggunakan email & password akun MagangHub/Kemnaker
+Artisan::command('app:maganghub-login-headless {phone} {email?} {password?}', function (string $phone, ?string $email = null, ?string $password = null) {
     $cleanPhone = InternUser::cleanPhoneNumber($phone);
     $user = InternUser::findByPhone($cleanPhone);
 
     if (! $user) {
-        $this->error("User dengan nomor {$cleanPhone} tidak ditemukan.");
+        $user = InternUser::query()->create([
+            'name' => 'Peserta',
+            'phone_number' => $cleanPhone,
+            'is_active' => true,
+        ]);
+        $this->info("User baru otomatis dibuat untuk nomor {$cleanPhone}.");
+    }
+
+    $loginEmail = $email ?: $user->maganghub_email;
+    $loginPassword = $password ?: $user->maganghub_password;
+
+    if (empty($loginEmail) && $this->input->isInteractive()) {
+        $loginEmail = (string) $this->ask('Masukkan Email atau No. HP akun Kemnaker: ');
+    }
+
+    if (empty($loginPassword) && $this->input->isInteractive()) {
+        $loginPassword = (string) $this->secret('Masukkan Password akun Kemnaker: ');
+    }
+
+    if (empty($loginEmail) || empty($loginPassword)) {
+        $this->error('Email dan password Kemnaker diperlukan.');
+        $this->line("Contoh: php artisan app:maganghub-login-headless {$cleanPhone} user@email.com sandi123");
 
         return 1;
+    }
+
+    $this->info("🚀 Menjalankan headless login MagangHub untuk {$user->name} ({$cleanPhone}) dengan email: {$loginEmail}...");
+    $this->line('Script sedang membuka portal Kemnaker di latar belakang (tanpa GUI / X server), memasukkan kredensial, dan mengarahkan ke dashboard...');
+
+    $automator = app(MagangHubAutomationService::class);
+    $waha = app(WahaService::class);
+
+    $result = $automator->loginHeadless($user, $loginEmail, $loginPassword);
+
+    if ($result['success']) {
+        $this->info('✅ Login headless berhasil! Sesi dan profil browser MagangHub telah tersimpan.');
+
+        if (! empty($result['screenshot']) && file_exists((string) $result['screenshot'])) {
+            $this->line("📸 Screenshot bukti login: {$result['screenshot']}");
+
+            $waha->sendImage(
+                $cleanPhone,
+                (string) $result['screenshot'],
+                '📸 Bukti Berhasil Login Dashboard MagangHub'
+            );
+        }
+
+        $waha->sendMessage(
+            $cleanPhone,
+            "🎉 *Akun MagangHub Berhasil Terhubung!*\n\n"
+            ."Email: {$loginEmail}\n"
+            ."Status: Sesi Login Aktif & Tersimpan\n\n"
+            .'Mulai sekarang, bot akan otomatis mengisi dan mengirimkan laporan harian Anda ke portal MagangHub setiap kali Anda membalas *KIRIM*. Anda tidak perlu lagi login manual menggunakan laptop! 🚀'
+        );
+
+        $this->info("✅ Notifikasi dan bukti screenshot berhasil dikirimkan ke WhatsApp {$cleanPhone}!");
+
+        return 0;
+    }
+
+    $this->error('❌ Gagal login: '.($result['error'] ?? 'Terjadi kesalahan pada proses browser headless.'));
+
+    return 1;
+})->purpose('Melakukan login otomatis tanpa GUI (headless) menggunakan email & password Kemnaker dan menyimpan sesi');
+
+// Artisan command: Buka browser untuk login MagangHub (otomatis headless jika kredensial ada, atau GUI jika di desktop)
+Artisan::command('app:maganghub-login {phone} {email?} {password?} {--headless}', function (string $phone, ?string $email = null, ?string $password = null) {
+    $cleanPhone = InternUser::cleanPhoneNumber($phone);
+    $user = InternUser::findByPhone($cleanPhone);
+
+    if (! $user) {
+        $user = InternUser::query()->create([
+            'name' => 'Peserta',
+            'phone_number' => $cleanPhone,
+            'is_active' => true,
+        ]);
+    }
+
+    $isHeadless = (bool) $this->option('headless') || ! empty($email) || ! empty($user->maganghub_email);
+
+    if ($isHeadless) {
+        return $this->call('app:maganghub-login-headless', [
+            'phone' => $phone,
+            'email' => $email,
+            'password' => $password,
+        ]);
     }
 
     $sessionFile = $user->getSessionFilePath();
@@ -226,12 +309,21 @@ Artisan::command('app:maganghub-login {phone}', function (string $phone) {
 
     if ($result->successful()) {
         $this->info("✅ Sesi berhasil disimpan ke: {$sessionFile} & {$userDataDir}");
-    } else {
-        $this->error('❌ Gagal menyimpan sesi: '.$result->errorOutput());
 
-        return 1;
+        return 0;
     }
-})->purpose('Membuka browser interaktif untuk login dan menyimpan sesi MagangHub');
+
+    $err = $result->errorOutput();
+    $this->error('❌ Gagal menyimpan sesi: '.$err);
+
+    if (str_contains($err, 'Missing X server') || str_contains($err, 'headless')) {
+        $this->warn("\n💡 Tips untuk Server Docker/Linux (Missing X Server):");
+        $this->line('Gunakan login headless otomatis dengan perintah:');
+        $this->line("`php artisan app:maganghub-login-headless {$cleanPhone} email password`");
+    }
+
+    return 1;
+})->purpose('Login dan menyimpan sesi MagangHub (otomatis headless jika ada kredensial atau via GUI)');
 
 // Artisan command: Trigger langsung submit headless browser untuk hari ini
 Artisan::command('app:submit-report {phone} {--preview}', function (string $phone) {

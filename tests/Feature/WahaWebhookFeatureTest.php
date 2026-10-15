@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Jobs\GenerateDailyReport;
+use App\Jobs\LoginMaganghubHeadless;
 use App\Jobs\SubmitMaganghubReport;
 use App\Models\DailyReport;
 use App\Models\InternUser;
@@ -313,5 +314,52 @@ class WahaWebhookFeatureTest extends TestCase
         ]);
 
         Queue::assertPushed(GenerateDailyReport::class);
+    }
+
+    public function test_it_handles_login_registration_command_and_dispatches_headless_job(): void
+    {
+        Queue::fake();
+
+        $response = $this->withHeaders(['X-Api-Key' => 'test_secret'])
+            ->postJson('/api/webhooks/waha', [
+                'event' => 'message',
+                'payload' => [
+                    'from' => '6281234567890@c.us',
+                    'fromMe' => false,
+                    'body' => 'LOGIN novan@example.com RahasiaKuat123!',
+                    'id' => 'msg_login_001',
+                ],
+            ]);
+
+        $response->assertStatus(200)
+            ->assertJson(['status' => 'login_dispatched']);
+
+        $this->assertDatabaseHas('intern_users', [
+            'phone_number' => '6281234567890',
+            'maganghub_email' => 'novan@example.com',
+        ]);
+
+        Queue::assertPushed(LoginMaganghubHeadless::class, function ($job) {
+            return $job->email === 'novan@example.com' &&
+                $job->password === 'RahasiaKuat123!' &&
+                $job->replyTarget === '6281234567890';
+        });
+    }
+
+    public function test_it_handles_akun_info_command(): void
+    {
+        $response = $this->withHeaders(['X-Api-Key' => 'test_secret'])
+            ->postJson('/api/webhooks/waha', [
+                'event' => 'message',
+                'payload' => [
+                    'from' => '6281234567890@c.us',
+                    'fromMe' => false,
+                    'body' => 'AKUN',
+                    'id' => 'msg_akun_001',
+                ],
+            ]);
+
+        $response->assertStatus(200)
+            ->assertJson(['status' => 'session_info_sent']);
     }
 }

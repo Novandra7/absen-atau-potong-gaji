@@ -49,6 +49,11 @@ class MagangHubAutomationService
             'fullPage' => true,
         ];
 
+        if ($user && ! empty($user->maganghub_email) && ! empty($user->maganghub_password)) {
+            $payload['email'] = $user->maganghub_email;
+            $payload['password'] = $user->maganghub_password;
+        }
+
         return $this->executeAutomator($payload);
     }
 
@@ -69,6 +74,10 @@ class MagangHubAutomationService
             ? $userOrPhone->phone_number
             : InternUser::cleanPhoneNumber($userOrPhone);
 
+        $user = $userOrPhone instanceof InternUser
+            ? $userOrPhone
+            : InternUser::findByPhone($phone);
+
         $sessionFile = storage_path("app/maganghub_sessions/{$phone}.json");
         $userDataDir = storage_path("app/maganghub_profiles/{$phone}");
         $screenshotPath = storage_path("app/public/screenshots/dashboard_test_{$phone}.png");
@@ -86,7 +95,88 @@ class MagangHubAutomationService
             'fullPage' => true,
         ];
 
+        if ($user && ! empty($user->maganghub_email) && ! empty($user->maganghub_password)) {
+            $payload['email'] = $user->maganghub_email;
+            $payload['password'] = $user->maganghub_password;
+        }
+
         return $this->executeAutomator($payload);
+    }
+
+    /**
+     * Perform headless automated login to Kemnaker SSO and save session.
+     *
+     * @return array{
+     *     success: bool,
+     *     screenshot: ?string,
+     *     error: ?string,
+     *     message: ?string,
+     *     output: ?string
+     * }
+     */
+    public function loginHeadless(InternUser|string $userOrPhone, ?string $email = null, ?string $password = null): array
+    {
+        $phone = $userOrPhone instanceof InternUser
+            ? $userOrPhone->phone_number
+            : InternUser::cleanPhoneNumber($userOrPhone);
+
+        $user = $userOrPhone instanceof InternUser
+            ? $userOrPhone
+            : InternUser::findByPhone($phone);
+
+        $loginEmail = $email ?: $user?->maganghub_email;
+        $loginPassword = $password ?: $user?->maganghub_password;
+
+        if (empty($loginEmail) || empty($loginPassword)) {
+            return [
+                'success' => false,
+                'screenshot' => null,
+                'error' => 'Email dan password Kemnaker/MagangHub diperlukan untuk login headless.',
+                'message' => null,
+                'output' => null,
+            ];
+        }
+
+        $sessionFile = storage_path("app/maganghub_sessions/{$phone}.json");
+        $userDataDir = storage_path("app/maganghub_profiles/{$phone}");
+        $screenshotPath = storage_path("app/public/screenshots/login_{$phone}.png");
+
+        File::ensureDirectoryExists(dirname($sessionFile));
+        File::ensureDirectoryExists($userDataDir);
+        File::ensureDirectoryExists(dirname($screenshotPath));
+
+        $payload = [
+            'userDataDir' => $userDataDir,
+            'sessionFile' => $sessionFile,
+            'screenshotPath' => $screenshotPath,
+            'headless' => true,
+            'loginOnly' => true,
+            'email' => $loginEmail,
+            'password' => $loginPassword,
+            'fullPage' => true,
+        ];
+
+        $result = $this->executeAutomator($payload);
+
+        if ($result['success']) {
+            if ($user) {
+                $user->update([
+                    'maganghub_email' => $loginEmail,
+                    'maganghub_password' => $loginPassword,
+                    'is_active' => true,
+                ]);
+            } else {
+                InternUser::query()->create([
+                    'name' => 'Peserta',
+                    'phone_number' => $phone,
+                    'maganghub_email' => $loginEmail,
+                    'maganghub_password' => $loginPassword,
+                    'is_active' => true,
+                ]);
+            }
+        }
+
+        return $result;
     }
 
     /**

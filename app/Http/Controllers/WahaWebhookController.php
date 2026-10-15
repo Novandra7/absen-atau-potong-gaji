@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Jobs\GenerateDailyReport;
+use App\Jobs\LoginMaganghubHeadless;
 use App\Jobs\SubmitMaganghubReport;
 use App\Models\AutomationLog;
 use App\Models\DailyReport;
@@ -103,19 +104,55 @@ class WahaWebhookController extends Controller
             })
             ->whereDate('report_date', $today);
 
+        // CASE: HUBUNGKAN / DAFTAR AKUN MAGANGHUB OTOMATIS (HEADLESS)
+        if (preg_match('/^(LOGIN|DAFTAR_AKUN|SIMPAN_AKUN|AKUN)\s+([^\s]+)\s+(.+)$/i', $body, $matches)) {
+            $email = trim($matches[2]);
+            $password = trim($matches[3]);
+
+            if (! $user) {
+                $user = InternUser::query()->create([
+                    'name' => 'Peserta',
+                    'phone_number' => $userPhone,
+                    'whatsapp_lid' => str_ends_with($rawFrom, '@lid') ? $senderDigits : null,
+                    'maganghub_email' => $email,
+                    'maganghub_password' => $password,
+                    'is_active' => true,
+                ]);
+            } else {
+                $user->update([
+                    'maganghub_email' => $email,
+                    'maganghub_password' => $password,
+                    'is_active' => true,
+                ]);
+            }
+
+            $waha->sendMessage(
+                $replyTarget,
+                "⏳ *Menerima Akun MagangHub!*\n\n"
+                ."Email: {$email}\n\n"
+                ."Sedang memproses verifikasi login otomatis ke portal Kemnaker di server...\n"
+                .'Mohon tunggu sekitar 15-30 detik. Bot akan mengambil screenshot dashboard dan mengirimkan konfirmasi ke sini.'
+            );
+
+            LoginMaganghubHeadless::dispatch($user, $email, $password, $replyTarget);
+
+            return response()->json(['status' => 'login_dispatched']);
+        }
+
         // CASE: INFO SESI / AKUN
         if (preg_match('/^(AKUN|SESI|LOGIN)/i', $body)) {
-            $hasSession = $user && $user->hasMagangSession();
-            $statusText = $hasSession ? '✅ *Sesi Aktif Tersimpan*' : '⚠️ *Belum Ada Sesi Aktif*';
+            $hasSession = $user && $user->hasMagangCredentialsOrSession();
+            $statusText = $hasSession ? '✅ *Akun / Sesi Aktif Tersimpan*' : '⚠️ *Belum Ada Sesi / Akun*';
 
             $waha->sendMessage(
                 $replyTarget,
                 "🔐 *Status Sesi Login MagangHub*\n\n"
-                ."Status: {$statusText}\n\n"
-                ."Sistem menggunakan sesi tersimpan tanpa meminta passwordmu demi keamanan.\n\n"
+                ."Status: {$statusText}\n"
+                .($user?->maganghub_email ? "Akun Terdaftar: {$user->maganghub_email}\n" : '')
+                ."\n"
                 .($hasSession
-                    ? 'Sesi kamu sudah aktif dan siap digunakan untuk kirim otomatis (cukup balas *KIRIM*).'
-                    : "Untuk menyimpan sesi pertama kali, jalankan perintah ini di laptop:\n`php artisan app:maganghub-login {$replyTarget}`")
+                    ? "Sesi dan akun kamu sudah aktif dan siap digunakan untuk kirim otomatis (cukup balas *KIRIM*).\n\nJika ingin memperbarui password/akun, ketik:\n`LOGIN email password`"
+                    : "📱 *Cara Hubungkan Akun (Langsung dari HP):*\nCukup balas pesan ini dengan format:\n*LOGIN email password*\nContoh:\n`LOGIN nama@gmail.com Password123`\n\nSistem akan otomatis login di server tanpa perlu buka laptop! 🚀")
             );
 
             return response()->json(['status' => 'session_info_sent', 'has_session' => $hasSession]);
