@@ -10,6 +10,7 @@ use App\Models\InternUser;
 use App\Services\WahaService;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Queue;
 use Mockery;
@@ -25,6 +26,9 @@ class WahaWebhookFeatureTest extends TestCase
 
         Config::set('services.waha.user_phone', '6281234567890');
         Config::set('services.waha.webhook_secret', 'test_secret');
+
+        // Clear all file-cached waha_* keys between tests to avoid stale locks leaking between tests
+        Cache::store('file')->flush();
 
         // Mock WahaService so no real HTTP calls are made during tests
         $wahaMock = Mockery::mock(WahaService::class);

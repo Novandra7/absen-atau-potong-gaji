@@ -40,8 +40,16 @@ class WahaWebhookController extends Controller
         }
 
         // 2. Extract Event & Payload
-        $event = $request->input('event', 'message');
+        $event = $request->input('event', '');
         $payload = $request->input('payload') ?? $request->all();
+
+        // Log full raw webhook for diagnosis
+        Log::debug('WahaWebhook: incoming', [
+            'event' => $event,
+            'payload_id' => $payload['id'] ?? null,
+            'from' => $payload['from'] ?? null,
+            'body_preview' => mb_substr((string) ($payload['body'] ?? ''), 0, 80),
+        ]);
 
         // Only process incoming message events (strictly 'message', ignore 'message.any' or delivery receipts to avoid duplicate processing)
         if ($event !== 'message') {
@@ -122,9 +130,9 @@ class WahaWebhookController extends Controller
                 return response()->json(['status' => 'already_processed']);
             }
 
-            // Atomic cache lock to prevent concurrent duplicate webhooks (e.g. 'message' and 'message.any' for same message)
-            if (! Cache::add('waha_msg_lock_'.$messageId, true, now()->addMinutes(10))) {
-                Log::info("WahaWebhook: Duplicate message [{$messageId}] ignored by atomic cache lock.");
+            // Atomic lock using file cache: FileStore::add() uses OS exclusive lock (flock) for true atomicity
+            if (! Cache::store('file')->add('waha_msg_lock_'.$messageId, true, 600)) {
+                Log::info("WahaWebhook: Duplicate message [{$messageId}] ignored by atomic lock.");
 
                 return response()->json(['status' => 'already_processed_duplicate_lock']);
             }
@@ -132,17 +140,15 @@ class WahaWebhookController extends Controller
 
         // Atomic stanza lock: Drops duplicate events when WAHA sends the same message via both @c.us and @lid
         if (! empty($stanzaId) && $stanzaId !== $messageId) {
-            if (! Cache::add('waha_stanza_lock_'.$stanzaId, true, now()->addMinutes(10))) {
+            if (! Cache::store('file')->add('waha_stanza_lock_'.$stanzaId, true, 600)) {
                 Log::info("WahaWebhook: Duplicate message stanza [{$stanzaId}] ignored by atomic stanza lock.");
 
                 return response()->json(['status' => 'already_processed_duplicate_lock']);
             }
         }
 
-        // Content & Sender debounce lock (15 seconds):
-        // Prevents WAHA double-event delivery (e.g. @c.us vs @lid, 'message' vs 'message.any')
-        $contentLockKey = 'waha_sender_body_lock_'.md5($userPhone.'_'.$upperBody);
-        if (! Cache::add($contentLockKey, true, now()->addSeconds(15))) {
+        // Content & Sender debounce: 15 seconds window prevents same-user identical-body double-delivery
+        if (! Cache::store('file')->add('waha_sender_body_lock_'.md5($userPhone.'_'.$upperBody), true, 15)) {
             Log::info("WahaWebhook: Duplicate content for user [{$userPhone}] ignored within 15s window.");
 
             return response()->json(['status' => 'already_processed_duplicate_content']);

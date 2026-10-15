@@ -8,6 +8,7 @@ use App\Models\InternUser;
 use App\Services\WahaService;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Config;
 use Mockery;
 use Tests\TestCase;
@@ -22,6 +23,7 @@ class MultiUserReminderTest extends TestCase
         Config::set('services.waha.webhook_secret', 'test_secret');
         Config::set('services.waha.user_phone', null);
         Config::set('services.waha.user_phones', null);
+        Cache::store('file')->flush();
     }
 
     public function test_it_sends_reminders_to_all_active_users(): void
