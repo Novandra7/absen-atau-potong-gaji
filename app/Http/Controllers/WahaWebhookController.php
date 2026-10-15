@@ -43,8 +43,8 @@ class WahaWebhookController extends Controller
         $event = $request->input('event', 'message');
         $payload = $request->input('payload') ?? $request->all();
 
-        // Only process message events
-        if (! in_array($event, ['message', 'message.any'], true)) {
+        // Only process incoming message events (strictly 'message', ignore 'message.any' or delivery receipts to avoid duplicate processing)
+        if ($event !== 'message') {
             return response()->json(['status' => 'ignored_event', 'event' => $event]);
         }
 
@@ -132,6 +132,20 @@ class WahaWebhookController extends Controller
             $email = trim($matches[2]);
             $password = trim($matches[3]);
 
+            // Debounce by email (30s window): Guarantees that only ONE login process runs per email, regardless of webhook retries or LID aliases
+            $loginEmailLockKey = 'waha_login_email_lock_'.md5(strtolower($email));
+            if (! Cache::add($loginEmailLockKey, true, now()->addSeconds(30))) {
+                Log::info("WahaWebhook: Duplicate LOGIN for email [{$email}] ignored within 30s window.");
+
+                return response()->json(['status' => 'already_processed_duplicate_login']);
+            }
+
+            if (! $user) {
+                $user = InternUser::where('maganghub_email', $email)
+                    ->orWhere('phone_number', $userPhone)
+                    ->first();
+            }
+
             if (! $user) {
                 $user = InternUser::query()->create([
                     'name' => 'Peserta',
@@ -142,11 +156,15 @@ class WahaWebhookController extends Controller
                     'is_active' => true,
                 ]);
             } else {
-                $user->update([
+                $attributes = [
                     'maganghub_email' => $email,
                     'maganghub_password' => $password,
                     'is_active' => true,
-                ]);
+                ];
+                if (str_ends_with($rawFrom, '@lid') && empty($user->whatsapp_lid)) {
+                    $attributes['whatsapp_lid'] = $senderDigits;
+                }
+                $user->update($attributes);
             }
 
             $waha->sendMessage(

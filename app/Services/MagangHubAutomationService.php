@@ -208,6 +208,9 @@ class MagangHubAutomationService
             @unlink($payload['userDataDir'].DIRECTORY_SEPARATOR.'SingletonSocket');
         }
 
+        $nodeBinary = (string) config('services.maganghub.node_path', 'node');
+        $scriptPath = base_path('scripts/maganghub-automator.mjs');
+
         try {
             $envPrefix = DIRECTORY_SEPARATOR === '\\' ? '' : 'HOME=/tmp XDG_CONFIG_HOME=/tmp/.chromium XDG_CACHE_HOME=/tmp/.chromium ';
             $command = sprintf('%s"%s" "%s" "%s" 2>&1', $envPrefix, $nodeBinary, $scriptPath, $tempPayloadFile);
