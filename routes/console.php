@@ -4,6 +4,8 @@ use App\Jobs\SendWhatsAppReminder;
 use App\Jobs\SubmitMaganghubReport;
 use App\Models\DailyReport;
 use App\Models\InternUser;
+use App\Services\MagangHubAutomationService;
+use App\Services\WahaService;
 use Carbon\Carbon;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
@@ -296,3 +298,57 @@ Artisan::command('app:check-session {phone?}', function (?string $phone = null) 
         }
     }
 })->purpose('Mengecek ketersediaan profil dan sesi login MagangHub');
+
+// Artisan command: Test browser headless membuka dashboard MagangHub & kirim screenshot ke WA
+Artisan::command('app:test-maganghub-browser {phone?}', function (?string $phone = null) {
+    $targetPhone = $phone ? InternUser::cleanPhoneNumber($phone) : (InternUser::getAllActivePhones()[0] ?? null);
+
+    if (! $targetPhone) {
+        $this->error('Nomor telepon tidak ditentukan dan tidak ada user aktif di sistem.');
+
+        return 1;
+    }
+
+    $user = InternUser::findByPhone($targetPhone);
+    $userName = $user ? $user->name : 'Peserta';
+
+    $this->info("🚀 Menjalankan headless browser untuk mengecek login dashboard MagangHub bagi {$userName} ({$targetPhone})...");
+
+    $automator = app(MagangHubAutomationService::class);
+    $waha = app(WahaService::class);
+
+    $result = $automator->testDashboard($targetPhone);
+
+    if ($result['success'] && ! empty($result['screenshot']) && file_exists((string) $result['screenshot'])) {
+        $this->info("✅ Berhasil login dan mengambil screenshot dashboard: {$result['screenshot']}");
+
+        $this->line("Mengirimkan screenshot bukti ke WhatsApp {$targetPhone}...");
+        $now = Carbon::now('Asia/Makassar')->format('d M Y H:i:s');
+
+        $sentImage = $waha->sendImage(
+            $targetPhone,
+            (string) $result['screenshot'],
+            "📸 Bukti Uji Otomasi Browser: Dashboard MagangHub ({$now} WITA)"
+        );
+
+        $waha->sendMessage(
+            $targetPhone,
+            "🎉 *Pengujian Browser Headless Berhasil!*\n\n"
+            ."User: {$userName}\n"
+            ."Waktu: {$now} WITA\n\n"
+            .'Browser berhasil membuka dashboard MagangHub dengan profil sesi Anda dan mengambil screenshot halaman secara penuh.'
+        );
+
+        if ($sentImage) {
+            $this->info("✅ Screenshot berhasil dikirim ke WhatsApp {$targetPhone}!");
+        } else {
+            $this->warn('⚠️ Screenshot berhasil diambil tapi gagal terkirim ke WhatsApp. Pastikan WAHA aktif.');
+        }
+
+        return 0;
+    }
+
+    $this->error('❌ Gagal membuka dashboard MagangHub: '.($result['error'] ?? 'Terjadi kendala pada browser headless.'));
+
+    return 1;
+})->purpose('Menguji browser headless login ke dashboard MagangHub dan mengirim screenshot bukti ke WhatsApp');

@@ -117,6 +117,7 @@ async function run() {
     submitForm = true,
     loginOnly = false,
     fullPage = true,
+    dashboardOnly = false,
   } = payload;
 
   const executablePath = findChromeExecutable();
@@ -232,6 +233,26 @@ async function run() {
         waitUntil: 'networkidle2',
         timeout: 30000,
       });
+    }
+
+    if (dashboardOnly) {
+      if (screenshotPath) {
+        const scDir = path.dirname(screenshotPath);
+        if (!fs.existsSync(scDir)) {
+          fs.mkdirSync(scDir, { recursive: true });
+        }
+        await page.screenshot({ path: screenshotPath, fullPage: Boolean(fullPage) });
+      }
+
+      console.log(
+        JSON.stringify({
+          success: true,
+          screenshot: screenshotPath || null,
+          message: 'Berhasil membuka dashboard MagangHub dan mengambil screenshot bukti sesi login aktif.',
+        })
+      );
+      await browser.close();
+      return;
     }
 
     if (loginOnly) {

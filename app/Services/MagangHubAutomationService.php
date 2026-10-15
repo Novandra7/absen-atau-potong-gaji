@@ -49,6 +49,60 @@ class MagangHubAutomationService
             'fullPage' => true,
         ];
 
+        return $this->executeAutomator($payload);
+    }
+
+    /**
+     * Test browser login and capture MagangHub dashboard screenshot.
+     *
+     * @return array{
+     *     success: bool,
+     *     screenshot: ?string,
+     *     error: ?string,
+     *     message: ?string,
+     *     output: ?string
+     * }
+     */
+    public function testDashboard(InternUser|string $userOrPhone): array
+    {
+        $phone = $userOrPhone instanceof InternUser
+            ? $userOrPhone->phone_number
+            : InternUser::cleanPhoneNumber($userOrPhone);
+
+        $sessionFile = storage_path("app/maganghub_sessions/{$phone}.json");
+        $userDataDir = storage_path("app/maganghub_profiles/{$phone}");
+        $screenshotPath = storage_path("app/public/screenshots/dashboard_test_{$phone}.png");
+
+        File::ensureDirectoryExists(dirname($sessionFile));
+        File::ensureDirectoryExists($userDataDir);
+        File::ensureDirectoryExists(dirname($screenshotPath));
+
+        $payload = [
+            'userDataDir' => $userDataDir,
+            'sessionFile' => $sessionFile,
+            'screenshotPath' => $screenshotPath,
+            'headless' => (bool) config('services.maganghub.headless', true),
+            'dashboardOnly' => true,
+            'fullPage' => true,
+        ];
+
+        return $this->executeAutomator($payload);
+    }
+
+    /**
+     * Run the automator Node script with payload file.
+     *
+     * @param  array<string, mixed>  $payload
+     * @return array{
+     *     success: bool,
+     *     screenshot: ?string,
+     *     error: ?string,
+     *     message: ?string,
+     *     output: ?string
+     * }
+     */
+    protected function executeAutomator(array $payload): array
+    {
         $tempPayloadFile = storage_path('framework/cache/maganghub_payload_'.uniqid('', true).'.json');
         File::ensureDirectoryExists(dirname($tempPayloadFile));
         file_put_contents($tempPayloadFile, (string) json_encode($payload));
