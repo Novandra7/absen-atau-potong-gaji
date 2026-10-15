@@ -65,7 +65,14 @@ class WahaWebhookController extends Controller
         $rawFrom = (string) ($payload['from'] ?? '');
         $senderDigits = preg_replace('/[^0-9]/', '', $rawFrom) ?? '';
         $body = trim((string) ($payload['body'] ?? $payload['_data']['body'] ?? ''));
-        $messageId = (string) ($payload['id'] ?? '');
+        $upperBody = strtoupper($body);
+
+        $rawId = $payload['id'] ?? $payload['_data']['id'] ?? $payload['key']['id'] ?? null;
+        if (is_array($rawId)) {
+            $messageId = (string) ($rawId['_serialized'] ?? $rawId['id'] ?? '');
+        } else {
+            $messageId = (string) ($rawId ?? '');
+        }
 
         if (empty($body) || empty($senderDigits)) {
             return response()->json(['status' => 'ignored_empty_message']);
@@ -100,10 +107,18 @@ class WahaWebhookController extends Controller
             }
         }
 
+        // Content & Sender debounce lock (8 seconds):
+        // Prevents WAHA double-event delivery ('message' + 'message.any') or rapid duplicate webhooks
+        $contentLockKey = 'waha_sender_body_lock_'.md5($senderDigits.'_'.$upperBody);
+        if (! Cache::add($contentLockKey, true, now()->addSeconds(8))) {
+            Log::info("WahaWebhook: Duplicate content from sender [{$senderDigits}] ignored within 8s window.");
+
+            return response()->json(['status' => 'already_processed_duplicate_content']);
+        }
+
         // 5. State Machine & Command Dispatcher
         $now = Carbon::now('Asia/Makassar');
         $today = $now->toDateString();
-        $upperBody = strtoupper($body);
 
         $findReport = fn () => DailyReport::query()
             ->where(function ($q) use ($userPhone, $senderDigits) {
