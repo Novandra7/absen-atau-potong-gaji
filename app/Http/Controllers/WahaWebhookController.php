@@ -43,14 +43,6 @@ class WahaWebhookController extends Controller
         $event = $request->input('event', '');
         $payload = $request->input('payload') ?? $request->all();
 
-        // Log full raw webhook for diagnosis
-        Log::debug('WahaWebhook: incoming', [
-            'event' => $event,
-            'payload_id' => $payload['id'] ?? null,
-            'from' => $payload['from'] ?? null,
-            'body_preview' => mb_substr((string) ($payload['body'] ?? ''), 0, 80),
-        ]);
-
         // Only process incoming message events (strictly 'message', ignore 'message.any' or delivery receipts to avoid duplicate processing)
         if ($event !== 'message') {
             return response()->json(['status' => 'ignored_event', 'event' => $event]);
@@ -91,6 +83,22 @@ class WahaWebhookController extends Controller
             $stanzaId = end($parts);
         }
 
+        Log::info("WahaWebhook: Incoming message [{$messageId}] (stanza: {$stanzaId}) from [{$rawFrom}]: ".mb_substr($body, 0, 50));
+
+        // Filter out historical messages replayed on WAHA startup/reconnection (older than 3 minutes)
+        $msgTimestamp = (int) ($payload['timestamp'] ?? $payload['_data']['timestamp'] ?? $payload['_data']['messageTimestamp'] ?? 0);
+        if ($msgTimestamp > 0) {
+            if ($msgTimestamp > 9999999999) {
+                $msgTimestamp = (int) ($msgTimestamp / 1000);
+            }
+            $age = abs(time() - $msgTimestamp);
+            if ($age > 180) {
+                Log::info("WahaWebhook: Ignored historical/replayed message [{$messageId}] (age: {$age}s)");
+
+                return response()->json(['status' => 'ignored_historical_replay', 'age' => $age]);
+            }
+        }
+
         if (empty($body) || empty($senderDigits)) {
             return response()->json(['status' => 'ignored_empty_message']);
         }
@@ -120,7 +128,7 @@ class WahaWebhookController extends Controller
         $userPhone = $user?->phone_number ?? $senderDigits;
         $replyTarget = $userPhone;
 
-        // 4. Idempotency Check (Atomic Cache Lock + Database Check)
+        // 4. Idempotency Check (Persistent Database Cache Lock)
         if (! empty($messageId)) {
             $alreadyProcessed = DailyReport::query()
                 ->where('waha_last_message_id', $messageId)
@@ -130,9 +138,9 @@ class WahaWebhookController extends Controller
                 return response()->json(['status' => 'already_processed']);
             }
 
-            // Atomic lock using file cache: FileStore::add() uses OS exclusive lock (flock) for true atomicity
-            if (! Cache::store('file')->add('waha_msg_lock_'.$messageId, true, 600)) {
-                Log::info("WahaWebhook: Duplicate message [{$messageId}] ignored by atomic lock.");
+            // Atomic lock using persistent cache store (database in Docker, array in test)
+            if (! Cache::add('waha_msg_lock_'.$messageId, true, 86400)) {
+                Log::info("WahaWebhook: Duplicate message [{$messageId}] ignored by persistent lock.");
 
                 return response()->json(['status' => 'already_processed_duplicate_lock']);
             }
@@ -140,16 +148,16 @@ class WahaWebhookController extends Controller
 
         // Atomic stanza lock: Drops duplicate events when WAHA sends the same message via both @c.us and @lid
         if (! empty($stanzaId) && $stanzaId !== $messageId) {
-            if (! Cache::store('file')->add('waha_stanza_lock_'.$stanzaId, true, 600)) {
-                Log::info("WahaWebhook: Duplicate message stanza [{$stanzaId}] ignored by atomic stanza lock.");
+            if (! Cache::add('waha_stanza_lock_'.$stanzaId, true, 86400)) {
+                Log::info("WahaWebhook: Duplicate message stanza [{$stanzaId}] ignored by persistent stanza lock.");
 
                 return response()->json(['status' => 'already_processed_duplicate_lock']);
             }
         }
 
-        // Content & Sender debounce: 15 seconds window prevents same-user identical-body double-delivery
-        if (! Cache::store('file')->add('waha_sender_body_lock_'.md5($userPhone.'_'.$upperBody), true, 15)) {
-            Log::info("WahaWebhook: Duplicate content for user [{$userPhone}] ignored within 15s window.");
+        // Content & Sender debounce: 30 seconds window
+        if (! Cache::add('waha_sender_body_lock_'.md5($userPhone.'_'.$upperBody), true, 30)) {
+            Log::info("WahaWebhook: Duplicate content for user [{$userPhone}] ignored within 30s window.");
 
             return response()->json(['status' => 'already_processed_duplicate_content']);
         }
@@ -170,10 +178,10 @@ class WahaWebhookController extends Controller
             $email = trim($matches[2]);
             $password = trim($matches[3]);
 
-            // Debounce by email (60s window): Guarantees that only ONE login process runs per email, regardless of webhook retries or LID aliases
+            // Debounce by email (120s window): Guarantees that only ONE login process runs per email, regardless of webhook retries or LID aliases
             $loginEmailLockKey = 'waha_login_email_lock_'.md5(strtolower($email));
-            if (! Cache::add($loginEmailLockKey, true, now()->addSeconds(60))) {
-                Log::info("WahaWebhook: Duplicate LOGIN for email [{$email}] ignored within 60s window.");
+            if (! Cache::add($loginEmailLockKey, true, 120)) {
+                Log::info("WahaWebhook: Duplicate LOGIN for email [{$email}] ignored within 120s window.");
 
                 return response()->json(['status' => 'already_processed_duplicate_login']);
             }

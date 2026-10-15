@@ -494,4 +494,31 @@ class WahaWebhookFeatureTest extends TestCase
         $this->assertSame('6285163235033@c.us', $service->formatChatId('1990999888777'));
         $this->assertSame('6285163235033@c.us', $service->formatChatId('1990999888777@lid'));
     }
+
+    public function test_it_ignores_historical_or_replayed_messages_older_than_3_minutes(): void
+    {
+        Queue::fake();
+
+        InternUser::factory()->create([
+            'phone_number' => '6285163235033',
+            'is_active' => true,
+        ]);
+
+        $response = $this->withHeaders(['X-Api-Key' => 'test_secret'])
+            ->postJson('/api/webhooks/waha', [
+                'event' => 'message',
+                'payload' => [
+                    'from' => '6285163235033@c.us',
+                    'fromMe' => false,
+                    'body' => 'LOGIN old@example.com Secret123!',
+                    'id' => 'msg_old_123',
+                    'timestamp' => time() - 300, // 5 minutes old replay
+                ],
+            ]);
+
+        $response->assertStatus(200)
+            ->assertJson(['status' => 'ignored_historical_replay']);
+
+        Queue::assertNothingPushed();
+    }
 }

@@ -92,6 +92,8 @@ class WahaService
             ]);
 
             if ($response->successful()) {
+                Log::info("WAHA: Successfully sent text message to {$chatId}");
+
                 return true;
             }
 
@@ -146,6 +148,8 @@ class WahaService
             $response = $this->client()->post("{$this->baseUrl}/api/sendImage", $payload);
 
             if ($response->successful()) {
+                Log::info("WAHA: Successfully sent image to {$chatId}");
+
                 return true;
             }
 
