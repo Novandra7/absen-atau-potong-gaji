@@ -44,9 +44,11 @@ return [
         'user_phones' => env('USER_PHONE_NUMBERS'),
     ],
 
-    'gemini' => [
-        'api_key' => env('GEMINI_API_KEY'),
-        'model' => env('GEMINI_MODEL', 'gemini-flash-lite-latest'),
+    'azure' => [
+        'api_key' => env('AZURE_OPENAI_API_KEY', env('AZURE_API_KEY')),
+        'endpoint' => env('AZURE_OPENAI_ENDPOINT', env('AZURE_ENDPOINT')),
+        'deployment' => env('AZURE_OPENAI_DEPLOYMENT', env('AZURE_DEPLOYMENT', 'gpt-4o-mini')),
+        'api_version' => env('AZURE_OPENAI_API_VERSION', '2024-08-01-preview'),
     ],
 
     'maganghub' => [
