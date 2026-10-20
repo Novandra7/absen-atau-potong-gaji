@@ -9,7 +9,6 @@ use App\Services\WahaService;
 use Carbon\Carbon;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
-use Illuminate\Support\Facades\Process;
 use Illuminate\Support\Facades\Schedule;
 
 Artisan::command('inspire', function () {
@@ -262,68 +261,66 @@ Artisan::command('app:maganghub-login-headless {phone} {email?} {password?}', fu
     return 1;
 })->purpose('Melakukan login otomatis tanpa GUI (headless) menggunakan email & password Kemnaker dan menyimpan sesi');
 
-// Artisan command: Buka browser untuk login MagangHub (otomatis headless jika kredensial ada, atau GUI jika di desktop)
-Artisan::command('app:maganghub-login {phone} {email?} {password?} {--headless}', function (string $phone, ?string $email = null, ?string $password = null) {
-    $cleanPhone = InternUser::cleanPhoneNumber($phone);
+Artisan::command('app:maganghub-login {phone} {email?} {password?}', function (string $phone, ?string $email = null, ?string $password = null) {
+    return $this->call('app:maganghub-login-headless', [
+        'phone' => $phone,
+        'email' => $email,
+        'password' => $password,
+    ]);
+})->purpose('Alias untuk app:maganghub-login-headless');
+
+// Artisan command: Logout dan hapus sesi MagangHub user
+Artisan::command('magang:logout {phone?}', function (?string $phone = null) {
+    $targetPhone = null;
+
+    if (! empty($phone)) {
+        $targetPhone = InternUser::cleanPhoneNumber($phone);
+    } else {
+        $users = InternUser::query()->get();
+        if ($users->isEmpty()) {
+            $this->warn('Belum ada user yang terdaftar di database.');
+
+            return 0;
+        } elseif ($users->count() === 1) {
+            $targetPhone = $users->first()->phone_number;
+        } else {
+            $options = $users->mapWithKeys(fn ($u) => [$u->phone_number => "{$u->name} ({$u->phone_number})"])->toArray();
+            $targetPhone = $this->choice('Pilih peserta magang untuk logout:', $options);
+        }
+    }
+
+    $cleanPhone = InternUser::cleanPhoneNumber($targetPhone);
     $user = InternUser::findByPhone($cleanPhone);
 
     if (! $user) {
-        $user = InternUser::query()->create([
-            'name' => 'Peserta',
-            'phone_number' => $cleanPhone,
-            'is_active' => true,
-        ]);
+        $this->error("User dengan nomor {$cleanPhone} tidak ditemukan di database.");
+
+        return 1;
     }
 
-    $isHeadless = (bool) $this->option('headless') || ! empty($email) || ! empty($user->maganghub_email);
+    $user->clearMagangSession();
 
-    if ($isHeadless) {
-        return $this->call('app:maganghub-login-headless', [
-            'phone' => $phone,
-            'email' => $email,
-            'password' => $password,
-        ]);
+    $this->info("✅ Berhasil logout! Seluruh tiket sesi (cookies & profil) untuk {$user->name} ({$cleanPhone}) telah dihapus dari server.");
+
+    // Send confirmation to WhatsApp if waha available
+    try {
+        $waha = app(WahaService::class);
+        $waha->sendMessage(
+            $user->getPreferredChatId(),
+            "🚪 *Sesi MagangHub Dihapus*\n\n"
+            ."Sesi akun Anda telah dihapus dari server.\n\n"
+            .'Untuk menghubungkan kembali, silakan ketik pesan: *LOGIN email password*.'
+        );
+    } catch (Throwable) {
+        // ignore if offline
     }
 
-    $sessionFile = $user->getSessionFilePath();
-    $userDataDir = $user->getProfilePath();
-    File::ensureDirectoryExists(dirname($sessionFile));
-    File::ensureDirectoryExists($userDataDir);
+    return 0;
+})->purpose('Menghapus tiket sesi login dan profil browser MagangHub user');
 
-    $this->info("🚀 Membuka browser untuk login MagangHub bagi {$user->name} ({$user->phone_number})...");
-    $this->line('Silakan login di jendela browser yang terbuka. Script akan otomatis mendeteksi saat masuk ke dashboard dan menyimpan sesi.');
-
-    $payload = [
-        'userDataDir' => $userDataDir,
-        'sessionFile' => $sessionFile,
-        'headless' => false,
-        'loginOnly' => true,
-    ];
-
-    $nodeBinary = (string) config('services.maganghub.node_path', 'node');
-    $scriptPath = base_path('scripts/maganghub-automator.mjs');
-
-    $result = Process::timeout(300)
-        ->input((string) json_encode($payload))
-        ->run([$nodeBinary, $scriptPath]);
-
-    if ($result->successful()) {
-        $this->info("✅ Sesi berhasil disimpan ke: {$sessionFile} & {$userDataDir}");
-
-        return 0;
-    }
-
-    $err = $result->errorOutput();
-    $this->error('❌ Gagal menyimpan sesi: '.$err);
-
-    if (str_contains($err, 'Missing X server') || str_contains($err, 'headless')) {
-        $this->warn("\n💡 Tips untuk Server Docker/Linux (Missing X Server):");
-        $this->line('Gunakan login headless otomatis dengan perintah:');
-        $this->line("`php artisan app:maganghub-login-headless {$cleanPhone} email password`");
-    }
-
-    return 1;
-})->purpose('Login dan menyimpan sesi MagangHub (otomatis headless jika ada kredensial atau via GUI)');
+Artisan::command('app:maganghub-logout {phone?}', function (?string $phone = null) {
+    return $this->call('magang:logout', ['phone' => $phone]);
+})->purpose('Alias untuk magang:logout');
 
 // Artisan command: Trigger langsung submit headless browser untuk hari ini
 Artisan::command('app:submit-report {phone} {--preview}', function (string $phone) {

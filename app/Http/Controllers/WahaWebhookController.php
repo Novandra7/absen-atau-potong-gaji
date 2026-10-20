@@ -230,8 +230,37 @@ class WahaWebhookController extends Controller
             return response()->json(['status' => 'login_dispatched']);
         }
 
-        // CASE: INFO SESI / AKUN
-        if (preg_match('/^(AKUN|SESI|LOGIN)/i', $body)) {
+        // CASE: LOGOUT / HAPUS SESI MAGANGHUB
+        if (in_array($upperBody, ['LOGOUT', 'KELUAR', 'HAPUS_SESI', 'HAPUS_AKUN'], true)) {
+            $hasSession = $user && $user->hasMagangCredentialsOrSession();
+
+            if (! $hasSession) {
+                $waha->sendMessage(
+                    $replyTarget,
+                    "ℹ️ *Tidak Ada Sesi Aktif*\n\n"
+                    ."Saat ini tidak ditemukan sesi login aktif untuk akun Anda di server.\n\n"
+                    .'Untuk menghubungkan akun, kirim pesan: *LOGIN email password*'
+                );
+
+                return response()->json(['status' => 'already_logged_out']);
+            }
+
+            $user->clearMagangSession();
+
+            $waha->sendMessage(
+                $replyTarget,
+                "🚪 *Berhasil Logout dari MagangHub!*\n\n"
+                ."Seluruh tiket sesi browser, cookies, dan data akun Anda telah dihapus secara bersih dari server.\n\n"
+                ."Otomasi pengiriman laporan harian dihentikan sementara.\n\n"
+                ."Untuk menghubungkan akun kembali di kemudian hari, cukup ketik pesan:\n"
+                .'*LOGIN email password*'
+            );
+
+            return response()->json(['status' => 'logged_out']);
+        }
+
+        // CASE: INFO SESI / STATUS AKUN
+        if (preg_match('/^(AKUN|SESI|STATUS|HUBUNGKAN)/i', $body)) {
             $hasSession = $user && $user->hasMagangCredentialsOrSession();
             $statusText = $hasSession ? '✅ *Akun / Sesi Aktif Tersimpan*' : '⚠️ *Belum Ada Sesi / Akun*';
 

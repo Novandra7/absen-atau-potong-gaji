@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 
 class InternUser extends Model
@@ -74,6 +75,31 @@ class InternUser extends Model
     {
         return file_exists($this->getSessionFilePath())
             || (! empty($this->maganghub_email) && ! empty($this->maganghub_password));
+    }
+
+    /**
+     * Clear the saved MagangHub session file, browser profile directory, and credentials.
+     */
+    public function clearMagangSession(bool $clearCredentials = true): bool
+    {
+        $sessionFile = $this->getSessionFilePath();
+        if (file_exists($sessionFile)) {
+            @unlink($sessionFile);
+        }
+
+        $profilePath = $this->getProfilePath();
+        if (is_dir($profilePath)) {
+            File::deleteDirectory($profilePath);
+        }
+
+        if ($clearCredentials) {
+            $this->update([
+                'maganghub_email' => null,
+                'maganghub_password' => null,
+            ]);
+        }
+
+        return true;
     }
 
     /**

@@ -266,14 +266,18 @@ async function run() {
   const launchOptions = {
     executablePath,
     headless: headless ? 'new' : false,
-    defaultViewport: { width, height, deviceScaleFactor: 1 },
+    defaultViewport: headless ? { width, height, deviceScaleFactor: 1 } : null,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
-      '--disable-accelerated-2d-canvas',
-      '--disable-gpu',
-      '--disable-software-rasterizer',
+      ...(headless ? [
+        '--disable-accelerated-2d-canvas',
+        '--disable-gpu',
+        '--disable-software-rasterizer',
+      ] : [
+        '--start-maximized',
+      ]),
       '--disable-crash-reporter',
       '--no-crashpad',
       '--disable-breakpad',
@@ -370,22 +374,32 @@ function cleanSingletonLocks(profileDir) {
         let loggedIn = false;
 
         while (Date.now() - startTime < 300000) { // 5 minutes max
-          const url = page.url();
-          if (url.includes('/dashboard') && !url.includes('/login') && !url.includes('account.kemnaker.go.id')) {
-            const hasLoginForm = await page.evaluate(() => {
-              return !!document.querySelector('input#username, input#password, form[action*="login"]');
-            }).catch(() => true);
+          try {
+            if (browser.isConnected && !browser.isConnected()) {
+              throw new Error('Jendela browser ditutup sebelum proses login selesai.');
+            }
+            const url = page.url();
+            if (url.includes('/dashboard') && !url.includes('/login') && !url.includes('account.kemnaker.go.id')) {
+              const hasLoginForm = await page.evaluate(() => {
+                return !document.querySelector('input#username, input#password, form[action*="login"]');
+              }).catch(() => false);
 
-            if (!hasLoginForm) {
-              loggedIn = true;
-              break;
+              if (hasLoginForm) {
+                loggedIn = true;
+                break;
+              }
+            }
+          } catch (err) {
+            const em = String(err?.message || '');
+            if (em.includes('closed') || em.includes('TargetCloseError') || em.includes('ditutup') || em.includes('Session closed')) {
+              throw new Error('Jendela browser Chrome ditutup sebelum proses login selesai.');
             }
           }
           await new Promise((r) => setTimeout(r, 1500));
         }
 
         if (!loggedIn) {
-          throw new Error('Timeout: Login manual tidak selesai dalam 5 menit.');
+          throw new Error('Timeout: Login manual di browser Chrome tidak selesai dalam 5 menit.');
         }
       }
 
